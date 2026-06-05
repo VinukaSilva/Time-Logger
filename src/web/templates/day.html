@@ -1,0 +1,712 @@
+{% extends "base.html" %}
+
+{# Reusable ticket combobox: hidden input + trigger button + searchable panel
+   with rows that show a real colored status pill (not just colored text).
+   form_id: optional value for the `form=` attribute on the hidden input —
+   needed when the combobox lives outside the form it submits to (e.g. bulk bar). #}
+{% macro ticket_combo(name, value, form_id='', combo_id='') -%}
+  {%- set selected = tickets | selectattr('key', 'equalto', value) | list | first if value else none -%}
+  <div class="ticket-combo" data-value="{{ value or '' }}" {% if combo_id %}id="{{ combo_id }}"{% endif %}>
+    <input type="hidden" name="{{ name }}" value="{{ value or '' }}" {% if form_id %}form="{{ form_id }}"{% endif %}>
+    <button type="button" class="ticket-combo-trigger" aria-haspopup="listbox" aria-expanded="false">
+      <span class="ticket-combo-display">
+        {% if selected %}
+          <span class="ticket-row-key">{{ selected.key }}</span>
+          <span class="status-pill pill-{{ selected.status_category or 'unknown' }}">{{ selected.status or '?' }}</span>
+          <span class="ticket-combo-summary">{{ selected.summary or '' }}</span>
+        {% else %}
+          <span class="ticket-combo-placeholder">&mdash; none &mdash;</span>
+        {% endif %}
+      </span>
+      <span class="ticket-combo-caret" aria-hidden="true">&#9662;</span>
+    </button>
+    <div class="ticket-combo-panel" hidden role="listbox">
+      <input type="search" class="ticket-combo-search input" placeholder="Filter by key, summary, status, or project…"
+             autocomplete="off" spellcheck="false">
+      <div class="ticket-combo-list">
+        <div class="ticket-combo-row" role="option" data-key="" data-search="">
+          <span class="ticket-row-key ticket-combo-none">&mdash; none &mdash;</span>
+        </div>
+        {% for t in tickets %}
+          <div class="ticket-combo-row" role="option" data-key="{{ t.key }}"
+               data-search="{{ (t.key ~ ' ' ~ (t.summary or '') ~ ' ' ~ (t.status or '') ~ ' ' ~ (t.project_key or ''))|lower }}">
+            <span class="ticket-row-key">{{ t.key }}</span>
+            <span class="status-pill pill-{{ t.status_category or 'unknown' }}">{{ t.status or '?' }}</span>
+            <span class="ticket-combo-summary">{{ t.summary or '' }}</span>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="ticket-combo-empty hint" hidden>No matching tickets.</div>
+    </div>
+  </div>
+{%- endmacro %}
+
+{# Markdown toolbar: small buttons that insert markdown syntax at the textarea
+   cursor (or wrap the current selection). `target_id` ties each button to its
+   textarea so multiple toolbars can coexist on the page. #}
+{% macro md_toolbar(target_id) -%}
+  <div class="md-toolbar" data-target="{{ target_id }}">
+    <button type="button" class="md-btn" data-md="bold"      title="Bold (Ctrl+B)"><b>B</b></button>
+    <button type="button" class="md-btn" data-md="italic"    title="Italic (Ctrl+I)"><i>I</i></button>
+    <button type="button" class="md-btn" data-md="code"      title="Inline code"><code>{ }</code></button>
+    <button type="button" class="md-btn" data-md="bullet"    title="Bullet list">&#8226;&nbsp;list</button>
+    <button type="button" class="md-btn" data-md="ordered"   title="Numbered list">1.&nbsp;list</button>
+    <button type="button" class="md-btn" data-md="heading"   title="Heading">H</button>
+    <button type="button" class="md-btn" data-md="quote"     title="Quote">&#10078;</button>
+    <button type="button" class="md-btn" data-md="codeblock" title="Code block">&#x29;]</button>
+    <button type="button" class="md-btn" data-md="link"      title="Link">&#128279;</button>
+    <span class="md-hint">markdown</span>
+  </div>
+{%- endmacro %}
+
+{% block ribbon %}
+{# v2 ribbon — taller, gradient backdrop, zoom pills, drag-to-create.
+   Bars carry data-start-min / data-end-min so JS can reposition them on zoom. #}
+<div class="ribbon-wrap ribbon-wrap-v2" data-day-iso="{{ date }}">
+  <div class="ribbon-head ribbon-head-v2">
+    <div class="ribbon-title-v2">
+      <strong>{{ 'Today' if date == today else formatted_date }}'s timeline</strong>
+      <span class="sub">{{ work_min_fmt|upper }} DETECTED · {{ draft_count }} DRAFT{{ 'S' if draft_count != 1 else '' }} · {{ ribbon_commits|length }} COMMIT{{ 'S' if ribbon_commits|length != 1 else '' }}</span>
+    </div>
+    <div class="ribbon-head-right">
+      <div class="ribbon-legend">
+        <span class="leg"><span class="leg-chip leg-work"></span>Work</span>
+        <span class="leg"><span class="leg-chip leg-unc"></span>Unclassified</span>
+        <span class="leg"><span class="leg-chip leg-idle"></span>Idle</span>
+        <span class="leg"><span class="leg-chip leg-git"></span>Commit</span>
+      </div>
+      <div class="zoom-pills" role="tablist" aria-label="Ribbon zoom">
+        <button type="button" class="zoom-pill active" data-zoom="day" data-start-min="420" data-end-min="1140">12h</button>
+        <button type="button" class="zoom-pill" data-zoom="4h" data-start-min="540" data-end-min="780">4h</button>
+        <button type="button" class="zoom-pill" data-zoom="1h" data-start-min="600" data-end-min="660">1h</button>
+      </div>
+    </div>
+  </div>
+  <div class="ribbon ribbon-v2" id="ribbon">
+    <div class="ribbon-track" id="ribbon-track">
+      {% for s in ribbon_segments %}
+        <div class="seg-bar {{ s.kind }}"
+             style="left:{{ s.left_pct }}%; width:{{ s.width_pct }}%"
+             data-start-hm="{{ s.start_hm }}" data-end-hm="{{ s.end_hm }}"
+             title="{{ s.start_hm }}–{{ s.end_hm }} · {{ s.ticket or s.title }}"></div>
+      {% endfor %}
+    </div>
+    <div class="draft-row" id="draft-row">
+      {% for b in ribbon_drafts %}
+        <div class="draft-bar {{ b.status }}"
+             style="left:{{ b.left_pct }}%; width:{{ b.width_pct }}%"
+             data-start-hm="{{ b.start_hm }}" data-end-hm="{{ b.end_hm }}"
+             title="{{ b.start_hm }}–{{ b.end_hm }} · {{ b.ticket or 'unassigned' }}"></div>
+      {% endfor %}
+    </div>
+    <div class="git-row" id="git-row">
+      {% for c in ribbon_commits %}
+        <div class="git-marker"
+             style="left:{{ c.left_pct }}%"
+             data-hm="{{ c.hm }}"
+             title="{{ c.hm }}  {{ c.sha }}  {{ c.message }}"></div>
+      {% endfor %}
+    </div>
+    <div class="ribbon-hours" id="ribbon-hours">
+      {% for h in ribbon_hours %}
+        <div class="ribbon-hour {% if h.major %}major{% endif %}" style="left:{{ h.pct }}%" data-hour="{{ h.label }}"></div>
+        <div class="ribbon-label" style="left:{{ h.pct }}%" data-hour="{{ h.label }}">{{ h.label }}</div>
+      {% endfor %}
+    </div>
+    {% if now_pct is not none %}
+      <div class="ribbon-now" id="ribbon-now" style="left:{{ now_pct }}%"></div>
+    {% endif %}
+    <div class="ghost-block" id="ribbon-ghost" hidden></div>
+    <div class="drag-hint">drag the track to draft a block</div>
+  </div>
+  {# Hidden form used by drag-to-create — JS fills in start/end and submits. #}
+  <form id="ribbon-drag-form" method="post" action="/day/{{ date }}/block" hidden>
+    <input type="hidden" name="start" value="">
+    <input type="hidden" name="end" value="">
+  </form>
+</div>
+{% endblock %}
+
+{% block content %}
+
+{% if flash %}
+  <div class="flash flash-{{ flash.level }}">
+    <span class="flash-msg"><pre style="margin:0;white-space:pre-wrap">{{ flash.message }}</pre></span>
+  </div>
+{% endif %}
+
+{# =====================================================
+   Coverage stats — v2 hero + 4 small stats + 7-day sparkline
+   ===================================================== #}
+{% set hero_r = 32 %}
+{% set hero_circ = (2 * 3.141592653589793 * hero_r) %}
+{% set drafted_pct_capped = drafted_pct if drafted_pct < 100 else 100 %}
+{% set hero_offset = (hero_circ - (hero_circ * drafted_pct_capped / 100)) | round(3) %}
+<div class="coverage-v2">
+  <div class="stat-hero">
+    <svg class="hero-ring" viewBox="0 0 76 76" width="76" height="76" aria-hidden="true">
+      <circle cx="38" cy="38" r="{{ hero_r }}" fill="none" stroke="var(--border-2)" stroke-width="6"/>
+      <circle class="hero-ring-fill" cx="38" cy="38" r="{{ hero_r }}" fill="none"
+              stroke="var(--accent)" stroke-width="6"
+              stroke-dasharray="{{ hero_circ | round(3) }}"
+              stroke-dashoffset="{{ hero_offset }}"
+              stroke-linecap="round"
+              transform="rotate(-90 38 38)"/>
+    </svg>
+    <div class="hero-body">
+      <div class="hero-label">Drafted {{ 'today' if date == today else 'this day' }}</div>
+      <div class="hero-value">
+        <span>{{ drafted_min_fmt }}</span>
+        <span class="pct">{{ drafted_pct }}%</span>
+      </div>
+      <div class="hero-sub">
+        <span><span>Target</span><span class="k">{{ (target_minutes // 60) }}h {{ '%02d' % (target_minutes % 60) }}m</span></span>
+        <span><span>Vs detected</span><span class="k {% if delta_mins >= 0 %}pos{% else %}neg{% endif %}">{% if delta_mins >= 0 %}+{% else %}-{% endif %}{{ delta_fmt }}</span></span>
+        <span><span>7-day avg</span><span class="k">{{ avg_7d_fmt }}</span></span>
+      </div>
+    </div>
+    <div class="hero-spark-label">7-DAY · DRAFTED</div>
+    <svg class="hero-spark" viewBox="0 0 140 36" preserveAspectRatio="none" aria-hidden="true">
+      {% if spark_area_d %}<path class="area" d="{{ spark_area_d }}"/>{% endif %}
+      {% if spark_line_d %}<path class="line" d="{{ spark_line_d }}"/>{% endif %}
+      <circle class="dot" cx="{{ spark_dot_x }}" cy="{{ spark_dot_y }}" r="2.5"/>
+    </svg>
+  </div>
+
+  <div class="stat-v2">
+    <div class="label">Detected work</div>
+    <div class="value">{{ work_min_fmt }}</div>
+    <div class="sub">{{ work_segments_count }} segment{{ '' if work_segments_count == 1 else 's' }}</div>
+  </div>
+  <div class="stat-v2">
+    <div class="label">Unclassified</div>
+    <div class="value">{{ unc_min_fmt }}</div>
+    <div class="sub">needs review</div>
+  </div>
+  <div class="stat-v2">
+    <div class="label">Idle</div>
+    <div class="value">{{ idle_min_fmt }}</div>
+    <div class="sub">away from keyboard</div>
+  </div>
+  <div class="stat-v2">
+    <div class="label">Coverage</div>
+    <div class="value">{{ coverage_pct }}%</div>
+    <div class="coverage-bar">
+      <div class="fill" style="width: {{ coverage_pct if coverage_pct < 100 else 100 }}%"></div>
+      <div class="mark" style="left: 50%"></div>
+      <div class="mark" style="left: 75%"></div>
+      <div class="mark" style="left: 100%"></div>
+    </div>
+  </div>
+</div>
+
+{# =====================================================
+   Detected activity (collapsible via <details>)
+   ===================================================== #}
+<details class="segments-wrap" open>
+  <summary class="segments-head">
+    <span>Detected activity &middot; {{ day.segments|length }} segment{{ '' if day.segments|length == 1 else 's' }}</span>
+    <span class="toggle">&#9662;</span>
+  </summary>
+  <div class="seglist">
+    {% if not day.segments %}
+      <div style="padding:20px 14px;color:var(--muted);font-size:var(--fs-sm)">No activity recorded for {{ date }}. Is the collector tray app running?</div>
+    {% endif %}
+    {% for s in day.segments %}
+      <div class="seg {{ s.kind }}">
+        <div class="seg-stripe"></div>
+        <div class="time">{{ s.start.strftime('%H:%M') }}&ndash;{{ s.end.strftime('%H:%M') }}</div>
+        <div class="mins">{{ s.minutes }}m</div>
+        <div class="ticket {% if not s.ticket_key %}none{% endif %}">{{ s.ticket_key or '—' }}</div>
+        <div class="title">{{ (s.top_titles[0] if s.top_titles else s.kind) }}</div>
+        <div class="block-badges">
+          {% if s.project_label %}<span class="badge">{{ s.project_label }}</span>{% endif %}
+          {% set cc = s.git_events | selectattr('event_type','equalto','commit') | list | length %}
+          {% if cc %}<span class="badge git">&#8967;{{ cc }}</span>{% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</details>
+
+{# =====================================================
+   Time log blocks (step 2)
+   ===================================================== #}
+<section class="block-section" style="background:transparent;border:0;padding:0">
+  <div class="section-head">
+    <div class="section-title">Time log
+      <span class="count">{{ blocks|length }} total{% if submitted_count %} &middot; {{ submitted_count }} synced{% endif %}{% if empty_drafts_count %} &middot; {{ empty_drafts_count }} empty{% endif %}</span>
+    </div>
+    <div class="section-actions">
+      <form method="post" action="/day/{{ date }}/discard_all" class="inline-form"
+            onsubmit="return confirm('Discard all {{ draft_count }} draft block{{ '' if draft_count == 1 else 's' }}? Submitted blocks are kept.')">
+        <button class="btn btn-sm btn-danger" type="submit" {% if draft_count == 0 %}disabled{% endif %}>Discard all drafts</button>
+      </form>
+    </div>
+  </div>
+
+  {# Bulk-edit form lives outside the cards so checkboxes can reference it via
+     the HTML `form` attribute — keeps cards free of nested forms. #}
+  <form id="bulk-ticket-form" method="post" action="/day/{{ date }}/bulk_ticket"></form>
+
+  <div class="blocks blocks-v2">
+    {# v2: bulk-select-all moved into a tiny header strip above the cards. #}
+    {% if blocks %}
+    <div class="blocks-head-v2">
+      <label class="block-select" title="Select all draft blocks">
+        <input type="checkbox" id="bulk-select-all" form="bulk-ticket-form">
+        <span class="hint">Select all drafts</span>
+      </label>
+    </div>
+    {% endif %}
+
+    {% if not blocks %}
+      <div class="block-empty">
+        <div class="illo">&#8709;</div>
+        <h4>No blocks yet for this day</h4>
+        <p>Click <strong>Auto-seed from work</strong> in the top bar to draft from detected segments, or use <strong>+ New block</strong> to add one manually.</p>
+      </div>
+    {% endif %}
+
+    {% for b in blocks %}
+      {% if not loop.first %}
+        {% set prev = blocks[loop.index0 - 1] %}
+        {% set gap_secs = b.start_ts - prev.end_ts %}
+        {% if gap_secs >= 600 %}
+          {% set sugg = gap_suggestions.get(b.start_ts) %}
+          <div class="gap-card" data-gap-start="{{ prev.end_ts | ts_to_hm }}" data-gap-end="{{ b.start_ts | ts_to_hm }}">
+            <span class="gap-time">Gap &middot; {{ prev.end_ts | ts_to_hm }}&ndash;{{ b.start_ts | ts_to_hm }}<span class="duration">{{ gap_secs // 60 }}m unaccounted</span></span>
+            {% if sugg and sugg.ticket %}
+              <span class="gap-suggest">Likely <span class="key">{{ sugg.ticket }}</span> <span class="reason">— {{ sugg.reason }}</span></span>
+            {% elif sugg %}
+              <span class="gap-suggest"><span class="reason">{{ sugg.reason }}</span></span>
+            {% else %}
+              <span class="gap-suggest"><span class="reason">no detected activity</span></span>
+            {% endif %}
+            <div class="gap-actions">
+              {% if sugg and sugg.ticket %}
+                <form method="post" action="/day/{{ date }}/block" class="inline-form">
+                  <input type="hidden" name="start" value="{{ prev.end_ts | ts_to_hm }}">
+                  <input type="hidden" name="end" value="{{ b.start_ts | ts_to_hm }}">
+                  <input type="hidden" name="ticket_key" value="{{ sugg.ticket }}">
+                  {% if sugg.project %}<input type="hidden" name="project_label" value="{{ sugg.project }}">{% endif %}
+                  <button class="btn btn-xs btn-primary" type="submit" title="Accept suggestion — creates a block pre-filled with {{ sugg.ticket }}">Accept</button>
+                </form>
+              {% endif %}
+              <form method="post" action="/day/{{ date }}/block" class="inline-form">
+                <input type="hidden" name="start" value="{{ prev.end_ts | ts_to_hm }}">
+                <input type="hidden" name="end" value="{{ b.start_ts | ts_to_hm }}">
+                <button class="btn btn-xs" type="submit">Fill gap</button>
+              </form>
+            </div>
+          </div>
+        {% endif %}
+      {% endif %}
+
+      {% set empty_desc = not (b.description and b.description|trim) %}
+      {% set submitted = b.status == 'submitted' %}
+      {# Card carries both .block-card (v2 styling) and .block-row (preserves
+         keyboard-nav + bulk-edit hooks from app.js). #}
+      <div class="block-card block-row {% if submitted %}submitted{% endif %} {% if empty_desc and not submitted %}has-empty{% endif %}"
+           data-block-id="{{ b.id }}"
+           onclick="document.getElementById('edit-{{ b.id }}').showModal()">
+        <div class="block-card-head">
+          <div class="block-select" onclick="event.stopPropagation()">
+            {% if not submitted %}
+              <input type="checkbox" class="bulk-row-check" name="block_ids" value="{{ b.id }}" form="bulk-ticket-form" aria-label="Select block">
+            {% endif %}
+          </div>
+
+          <div class="block-time-block">
+            <span class="range">{{ b.start_ts | ts_to_hm }} &rarr; {{ b.end_ts | ts_to_hm }}</span>
+            <span class="dur">{{ b.minutes }}m</span>
+          </div>
+
+          <div class="block-meta">
+            <div class="block-meta-row1">
+              {% if b.ticket_key %}
+                <span class="ticket-key">{{ b.ticket_key }}</span>
+                {% for t in tickets if t.key == b.ticket_key %}<span class="ticket-summary">{{ t.summary }}</span>{% endfor %}
+              {% else %}
+                <span class="ticket-key none">&mdash; no ticket &mdash;</span>
+              {% endif %}
+            </div>
+            <div class="desc-preview {% if empty_desc %}placeholder{% endif %}">
+              {% if empty_desc %}Add a technical summary&hellip;{% else %}{{ b.description }}{% endif %}
+            </div>
+          </div>
+
+          <div class="block-badges-v2">
+            {% if b.git_count and b.git_count > 0 %}<span class="badge-v2 git">&#8967; {{ b.git_count }}</span>{% endif %}
+            {% if b.project_label %}<span class="badge-v2">{{ b.project_label }}</span>{% endif %}
+            {% if submitted %}
+              <span class="status-pill synced">Synced</span>
+            {% elif empty_desc %}
+              <span class="status-pill empty">Empty</span>
+            {% else %}
+              <span class="status-pill draft">Draft</span>
+            {% endif %}
+          </div>
+
+          <div class="block-card-actions" onclick="event.stopPropagation()">
+            {% if not submitted %}
+              <button type="button" class="btn btn-xs btn-icon" onclick="document.getElementById('edit-{{ b.id }}').showModal()" title="Edit (E)">&#9998;</button>
+              <form method="post" action="/block/{{ b.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this block?')">
+                <input type="hidden" name="ds" value="{{ date }}">
+                <button class="btn btn-xs btn-icon btn-danger" type="submit" title="Delete">&times;</button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {# Bulk action bar — hidden until at least one block is selected. The
+     form attribute on the inputs/button below ties them to #bulk-ticket-form. #}
+  <div id="bulk-bar" class="bulk-bar" hidden>
+    <span class="bulk-bar-count"><strong id="bulk-bar-n">0</strong> selected</span>
+    <label class="bulk-bar-field">
+      <span>Set ticket</span>
+      {{ ticket_combo('ticket_key', '', form_id='bulk-ticket-form') }}
+    </label>
+    <button type="submit" class="btn btn-sm btn-primary" form="bulk-ticket-form">Apply to selected</button>
+    <button type="button" class="btn btn-sm btn-ghost" id="bulk-bar-clear">Clear</button>
+  </div>
+</section>
+
+{# =====================================================
+   Edit modals — step 5 redesign
+   ===================================================== #}
+{% for b in blocks %}
+  <dialog id="edit-{{ b.id }}" class="edit-dialog">
+    <div class="modal">
+      <form id="edit-form-{{ b.id }}" method="post" action="/block/{{ b.id }}">
+        <input type="hidden" name="ds" value="{{ date }}">
+        <input type="hidden" name="project_label" value="{{ b.project_label or '' }}">
+
+        <div class="modal-head">
+          <div>
+            <h3>Edit block</h3>
+            <div class="meta">{{ b.start_ts | ts_to_hm }} – {{ b.end_ts | ts_to_hm }} &middot; {{ b.minutes }}m &middot; {{ b.project_label or 'unassigned' }}</div>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm btn-icon"
+                  onclick="document.getElementById('edit-{{ b.id }}').close()"
+                  aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="row2">
+            <div class="field">
+              <label class="field-label">Start</label>
+              <input class="input" type="time" name="start" value="{{ b.start_ts | ts_to_hm }}" required>
+            </div>
+            <div class="field">
+              <label class="field-label">End</label>
+              <input class="input" type="time" name="end" value="{{ b.end_ts | ts_to_hm }}" required>
+            </div>
+            <div class="field">
+              <label class="field-label">Duration</label>
+              <input class="input" readonly value="{{ b.minutes }}m ({{ b.minutes | fmt_dur }})">
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="field-label">Ticket <span class="hint">&mdash; one of your assigned Jira tickets</span></label>
+            {{ ticket_combo('ticket_key', b.ticket_key) }}
+          </div>
+
+          <div class="field">
+            <label class="field-label">Description <span class="hint">&mdash; supports markdown (bullets, **bold**, links, emoji, etc.)</span></label>
+            {{ md_toolbar('edit-desc-' ~ b.id) }}
+            <textarea class="textarea mono md-textarea" name="description" id="edit-desc-{{ b.id }}" rows="9"
+                      placeholder="Traced the OAuth refresh loop to overlapping token refresh + reauth prompts during long idle. Added a single-flight guard in the middleware and covered with a regression test.">{{ b.description or '' }}</textarea>
+            {% if b.git_events %}
+              <div class="suggestions">
+                <span class="hint" style="align-self:center">Suggest from commits:</span>
+                {% for g in b.git_events %}
+                  <button type="button" class="suggest-chip"
+                          data-msg="{{ g.message }}"
+                          onclick="appendDesc(this)">
+                    <span class="pre">{{ g.commit_sha[:7] }}</span>
+                    <span>{{ g.message|truncate(54, True) }}</span>
+                  </button>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+
+          {% set ctx_segs = block_context_segments[b.id] %}
+          <div class="edit-context">
+            <h5>Context in this window</h5>
+            {% if ctx_segs %}
+              <ul>
+                {% for s in ctx_segs %}
+                  <li><span class="t">{{ s.hm }}</span><span>{{ s.title or '(' ~ s.kind ~ ')' }}</span></li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <div class="hint" style="color:var(--muted);font-size:var(--fs-xs)">No detected segments in this window.</div>
+            {% endif %}
+            {% if b.git_events %}
+              <ul>
+                {% for g in b.git_events %}
+                  <li>
+                    <span class="t">{{ g.hm }}</span>
+                    <span class="c">{{ g.commit_sha[:7] }}</span>
+                    <span>{{ g.message }}</span>
+                  </li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <div class="left">
+            {% if b.status != 'submitted' %}
+              <button type="button" class="btn btn-sm btn-danger"
+                      onclick="if (confirm('Delete this block?')) document.getElementById('delete-form-{{ b.id }}').submit()">Delete</button>
+            {% endif %}
+          </div>
+          <div class="right">
+            <span class="modal-hint"><span class="kbd">Esc</span> to cancel &middot; <span class="kbd">&#8984;</span><span class="kbd">&crarr;</span> to save</span>
+            <button type="button" class="btn btn-sm"
+                    onclick="document.getElementById('edit-{{ b.id }}').close()">Cancel</button>
+            <button type="submit" class="btn btn-primary btn-sm">Save block</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </dialog>
+  {% if b.status != 'submitted' %}
+    <form id="delete-form-{{ b.id }}" method="post" action="/block/{{ b.id }}/delete" style="display:none">
+      <input type="hidden" name="ds" value="{{ date }}">
+    </form>
+  {% endif %}
+{% endfor %}
+
+{# =====================================================
+   Add-block form — kept compact
+   ===================================================== #}
+<form method="post" action="/day/{{ date }}/block" class="add-block" id="add-block-form">
+  <h3>Add a block manually</h3>
+  <div class="row">
+    <label>Start <input type="time" name="start" required></label>
+    <label>End <input type="time" name="end" required></label>
+    <label class="ticket-field">
+      Ticket
+      {{ ticket_combo('ticket_key', '') }}
+    </label>
+  </div>
+  <div class="row">
+    <label class="full">
+      Description <span class="muted">(technical summary &mdash; supports markdown)</span>
+      {{ md_toolbar('add-block-desc') }}
+      <textarea name="description" id="add-block-desc" class="md-textarea" rows="10"
+                placeholder="Reviewed PR #87, pair-debugged the OAuth redirect loop.&#10;&#10;**Highlights:**&#10;- Single-flight guard in middleware&#10;- Regression test added&#10;&#10;See [the PR](https://example.com/pr/87) for context."></textarea>
+    </label>
+  </div>
+  <button class="btn btn-primary btn-sm" type="submit">+ Add block</button>
+</form>
+
+{% endblock %}
+
+{% block rail %}
+<section class="rail-section">
+  <h4>Today</h4>
+  <div class="rail-card big-ring">
+    <svg viewBox="0 0 88 88" aria-hidden="true">
+      <circle class="track" cx="44" cy="44" r="{{ big_ring_r }}" fill="none" stroke-width="{{ big_ring_stroke }}"></circle>
+      <circle class="fill-draft" cx="44" cy="44" r="{{ big_ring_r }}" fill="none" stroke-width="{{ big_ring_stroke }}"
+              stroke-dasharray="{{ big_ring_circ }}" stroke-dashoffset="{{ big_ring_draft_offset }}"
+              stroke-linecap="round" transform="rotate(-90 44 44)"></circle>
+      <circle class="fill" cx="44" cy="44" r="{{ big_ring_r }}" fill="none" stroke-width="{{ big_ring_stroke }}"
+              stroke-dasharray="{{ big_ring_circ }}" stroke-dashoffset="{{ big_ring_fill_offset }}"
+              stroke-linecap="round" transform="rotate(-90 44 44)"></circle>
+    </svg>
+    <div class="big-ring-body">
+      <div class="pct">{{ drafted_pct }}%</div>
+      <div class="sub">of 8h target</div>
+      <div class="target">{{ drafted_min_fmt }} drafted &middot; {{ work_min_fmt }} detected</div>
+    </div>
+  </div>
+</section>
+
+<section class="rail-section">
+  <h4>Last 28 days</h4>
+  <div class="rail-card" style="padding:12px">
+    <div class="heatmap">
+      <div></div>
+      {% for dow in ['M','T','W','T','F','S','S'] %}
+        <div class="heatmap-dow" style="text-align:center">{{ dow }}</div>
+      {% endfor %}
+      {% for row in heatmap %}
+        <div class="heatmap-dow">{% if loop.last %}now{% else %}-{{ (4 - loop.index) * 7 }}d{% endif %}</div>
+        {% for cell in row %}
+          {% if cell.is_future %}
+            <div class="heatmap-cell empty" title="future"></div>
+          {% else %}
+            <a class="heatmap-cell {{ cell.level }} {% if cell.is_today %}today{% endif %} {% if cell.is_selected %}selected{% endif %} {% if cell.submitted %}submitted{% endif %}"
+               href="/day/{{ cell.date }}"
+               title="{{ cell.date }} · {{ cell.minutes }}m{% if cell.submitted %} · submitted{% endif %}">{% if cell.submitted %}<span class="heatmap-mark" aria-hidden="true">&#10003;</span>{% endif %}</a>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    </div>
+    <div class="heatmap-labels"><span>Less</span><span>More</span></div>
+  </div>
+</section>
+
+<section class="rail-section">
+  <h4>Sync targets</h4>
+  <div class="rail-card">
+    <div class="rail-kv">
+      <span class="k">Jira</span>
+      <span class="v">
+        <span class="sync-dot {% if sync.jira_ok %}ok{% else %}warn{% endif %}"></span>
+        {{ sync.jira_label }}
+      </span>
+    </div>
+    <div class="rail-kv">
+      <span class="k">Tickets cached</span>
+      <span class="v">{{ sync.jira_ticket_count }} &middot; {{ sync.jira_refresh_label }}</span>
+    </div>
+    <div class="rail-kv" style="justify-content:flex-end;gap:6px">
+      <button type="button" class="btn btn-xs"
+              onclick="document.getElementById('tickets-modal').showModal()">Browse tickets</button>
+      <form method="post" action="/tickets/refresh" class="inline-form">
+        <input type="hidden" name="ds" value="{{ date }}">
+        <button class="btn btn-xs" type="submit">Refresh</button>
+      </form>
+    </div>
+    <div class="rail-kv">
+      <span class="k">Sheets</span>
+      <span class="v">
+        <span class="sync-dot {% if sync.sheets_ok %}ok{% else %}warn{% endif %}"></span>
+        {{ sync.sheets_label }}
+      </span>
+    </div>
+    <div class="rail-kv">
+      <span class="k">Collector</span>
+      <span class="v">
+        <span class="sync-dot ok"></span>
+        {{ sync.collector_label }}
+      </span>
+    </div>
+    <div class="rail-kv">
+      <span class="k">Last git scan</span>
+      <span class="v">{{ sync.last_scan_label }}</span>
+    </div>
+  </div>
+</section>
+
+<section class="rail-section">
+  <h4>Keyboard</h4>
+  <div class="rail-card kbd-list">
+    <div class="kbd-row"><span>Command palette</span><span class="keys"><span class="kbd">Ctrl</span><span class="kbd">K</span></span></div>
+    <div class="kbd-row"><span>Submit day</span><span class="keys"><span class="kbd">Ctrl</span><span class="kbd">&crarr;</span></span></div>
+    <div class="kbd-row"><span>Next / prev block</span><span class="keys"><span class="kbd">J</span><span class="kbd">K</span></span></div>
+    <div class="kbd-row"><span>Edit selected</span><span class="keys"><span class="kbd">E</span></span></div>
+    <div class="kbd-row"><span>Prev / next day</span><span class="keys"><span class="kbd">[</span><span class="kbd">]</span></span></div>
+    <div class="kbd-row"><span>Today</span><span class="keys"><span class="kbd">T</span></span></div>
+    <div class="kbd-row"><span>Auto-seed</span><span class="keys"><span class="kbd">&#8679;</span><span class="kbd">S</span></span></div>
+    <div class="kbd-row"><span>Add block</span><span class="keys"><span class="kbd">N</span></span></div>
+    <div class="kbd-row"><span>Close modal</span><span class="keys"><span class="kbd">Esc</span></span></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block modals %}
+<dialog id="submit-confirm" class="edit-dialog" aria-label="Submit confirmation">
+  <div class="modal" style="max-width:620px">
+    <div class="modal-head">
+      <div>
+        <h3>Submit to Jira &amp; Google Sheets</h3>
+        <div class="meta">{{ date }} &middot; {{ draft_count }} draft block{{ '' if draft_count == 1 else 's' }}</div>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm btn-icon"
+              onclick="document.getElementById('submit-confirm').close()" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="submit-summary">
+        <div><span class="label">Blocks</span><span class="value">{{ draft_count }}</span></div>
+        <div><span class="label">Total time</span><span class="value">{{ draft_total_fmt }}</span></div>
+        <div><span class="label">Issues</span><span class="value">{{ draft_issues }}</span></div>
+      </div>
+
+      {% if empty_drafts_count %}
+        <div class="flash flash-error">
+          <span class="flash-msg">{{ empty_drafts_count }} block{{ ' is' if empty_drafts_count == 1 else 's are' }} missing a ticket or description. You can still submit — those will be skipped.</span>
+        </div>
+      {% endif %}
+
+      {% if draft_count == 0 %}
+        <div style="color:var(--muted);font-size:var(--fs-sm);padding:8px 4px">No draft blocks to submit.</div>
+      {% else %}
+        <div class="submit-list">
+          {% for b in draft_blocks %}
+            {% set skip = not b.ticket_key or not (b.description and b.description|trim) %}
+            <div class="submit-item {% if skip %}skip{% endif %}">
+              <span class="submit-marker {% if skip %}warn{% else %}ok{% endif %}">{% if skip %}!{% else %}&#10003;{% endif %}</span>
+              <span class="mono">{{ b.start_hm }}&ndash;{{ b.end_hm }}</span>
+              <span class="k">{% if b.ticket_key %}{{ b.ticket_key }}{% else %}<span style="color:var(--muted-2)">no ticket</span>{% endif %}</span>
+              <span class="d">{% if b.description and b.description|trim %}{{ b.description }}{% else %}<em style="color:var(--muted-2)">missing description</em>{% endif %}</span>
+              <span class="target">Jira &middot; Sheets</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+    <div class="modal-foot">
+      <div class="left">
+        <span class="modal-hint">Pushes Jira worklog + appends a row to the sheet. Idempotent by (date, start_ts).</span>
+      </div>
+      <div class="right">
+        <button type="button" class="btn btn-sm"
+                onclick="document.getElementById('submit-confirm').close()">Cancel</button>
+        <form method="post" action="/day/{{ date }}/submit" style="display:inline">
+          <button type="submit" class="btn btn-primary btn-sm" {% if submittable_count == 0 %}disabled{% endif %}>
+            Submit {{ submittable_count }} block{{ '' if submittable_count == 1 else 's' }}
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+{# =====================================================
+   Tickets browser — quick reference for status / project
+   ===================================================== #}
+<dialog id="tickets-modal" class="edit-dialog">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <h3>Jira tickets <span class="hint">— {{ tickets|length }} cached</span></h3>
+        <div class="meta">Search by key, summary, or status. Click a row to open in Jira.</div>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm btn-icon"
+              onclick="document.getElementById('tickets-modal').close()"
+              aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input id="tickets-filter" class="input" type="search"
+             placeholder="Filter by key, summary, status, or project…"
+             autocomplete="off" spellcheck="false">
+      <div class="tickets-list" id="tickets-list">
+        {% for t in tickets %}
+          <a class="ticket-row" target="_blank" rel="noopener"
+             href="{{ t.url }}"
+             data-search="{{ (t.key ~ ' ' ~ (t.summary or '') ~ ' ' ~ (t.status or '') ~ ' ' ~ (t.project_key or ''))|lower }}">
+            <span class="ticket-row-key">{{ t.key }}</span>
+            <span class="status-pill pill-{{ t.status_category or 'unknown' }}">{{ t.status or '?' }}</span>
+            <span class="ticket-row-summary">{{ t.summary or '' }}</span>
+            <span class="ticket-row-proj">{{ t.project_key }}</span>
+          </a>
+        {% endfor %}
+      </div>
+      <div id="tickets-empty" class="hint" style="text-align:center;padding:14px;display:none">No matching tickets.</div>
+    </div>
+  </div>
+</dialog>
+{% endblock %}

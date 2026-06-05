@@ -1,0 +1,103 @@
+"""LLM polish for auto-seeded block descriptions.
+
+Given a signals dict (see `describer.gather_signals`), build a prompt that asks
+the configured LLM to produce a clean, MR-style markdown summary, and return
+its text. Designed to fail soft — the caller falls back to the structured
+formatter when this raises.
+"""
+from __future__ import annotations
+
+import logging
+
+from ..llm import LLMUnavailable, get_client
+
+log = logging.getLogger(__name__)
+
+
+def _build_prompt(signals: dict, current: str) -> str:
+    duration = signals.get("duration_min", 0)
+    project = signals.get("project_label") or "(unspecified)"
+    commits = signals.get("commits") or []
+    prompts = signals.get("claude_prompts") or []
+    files_edited = signals.get("claude_files_edited") or []
+    files_written = signals.get("claude_files_written") or []
+    files_read = signals.get("claude_files_read") or []
+    bash_cmds = signals.get("claude_bash_cmds") or []
+    searches = signals.get("claude_searches") or []
+    working_tree = signals.get("working_tree_files") or []
+    titles = signals.get("top_titles") or []
+
+    parts: list[str] = []
+    parts.append(
+        "You are summarizing a software-engineering work session for a Jira worklog "
+        "comment. Write the summary as if you were the developer who did the work."
+    )
+    parts.append(f"Project: {project}")
+    parts.append(f"Duration: {duration} minutes")
+
+    if commits:
+        parts.append("\nCommits in this window:")
+        for c in commits[:8]:
+            msg = (c.get("message") or "").strip().splitlines()[0]
+            files = c.get("files") or []
+            file_hint = f" — files: {', '.join(files[:6])}" if files else ""
+            parts.append(f"  - {c.get('sha','')} {msg}{file_hint}")
+
+    if prompts:
+        parts.append("\nQuestions / tasks asked of Claude Code (paraphrasing what the developer wanted):")
+        for p in prompts[:8]:
+            parts.append(f"  - {p[:280]}")
+
+    if files_written:
+        parts.append("\nFiles written (via Claude Code): " + ", ".join(files_written[:10]))
+    if files_edited:
+        parts.append("Files edited (via Claude Code): " + ", ".join(files_edited[:10]))
+    if files_read:
+        parts.append("Files read for context: " + ", ".join(files_read[:10]))
+    if bash_cmds:
+        parts.append("Shell commands run: " + " | ".join(bash_cmds[:6]))
+    if searches:
+        parts.append("Code searches: " + " | ".join(searches[:4]))
+    if working_tree:
+        parts.append("Uncommitted working-tree changes touched: " + ", ".join(working_tree[:10]))
+    if titles:
+        parts.append("Observed window titles: " + " | ".join(t[:80] for t in titles[:5]))
+
+    if current and current.strip():
+        parts.append("\nThe developer's current structured draft (you may use, refine, or replace):")
+        parts.append("```\n" + current.strip() + "\n```")
+
+    parts.append(
+        "\nWrite the summary in markdown. Use short bullet points grouped by topic when "
+        "useful. Mention specific files / commits / functions where they help. Match the "
+        "tone of a thoughtful merge-request description. Be concise — 3–10 lines is ideal. "
+        "Do NOT include preamble, headings like 'Summary:', a sign-off, or invented details. "
+        "Output the description only."
+    )
+    return "\n".join(parts)
+
+
+def polish_signals(signals: dict, current: str = "") -> str:
+    """Run the configured LLM on the gathered signals and return polished markdown.
+
+    Raises LLMUnavailable when no client is configured or the call fails. The
+    caller is expected to catch this and fall back to the structured formatter.
+    """
+    client = get_client()
+    if client is None:
+        raise LLMUnavailable("LLM polish disabled (no provider configured or API key missing).")
+    prompt = _build_prompt(signals, current)
+    log.info("polish prompt %d chars, %d commits, %d prompts",
+             len(prompt), len(signals.get("commits") or []), len(signals.get("claude_prompts") or []))
+    return client.polish(prompt)
+
+
+def is_enabled() -> bool:
+    """True if an LLM client is currently configured and usable."""
+    return get_client() is not None
+
+
+def min_call_interval() -> float:
+    """Provider-recommended sleep (seconds) between successive polish calls."""
+    c = get_client()
+    return float(getattr(c, "min_call_interval_seconds", 0.0)) if c else 0.0

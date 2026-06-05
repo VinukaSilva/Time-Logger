@@ -1,0 +1,56 @@
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+secrets/
+secrets/*
+
+# --- Local data ---
+db/
+db/*.sqlite
+db/*.sqlite-journal
+logs/
+*.log
+web.err
+web.log
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- IDEs & editors ---
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Build artifacts ---
+build/
+dist/
+*.egg
+
+# --- Local user override (not yet used, but reserved) ---
+config.local.yaml
+
+# --- User's working config (clone instead of editing in place) ---
+# Users copy config.example.yaml → config.yaml and edit there. The working
+# config.yaml stays local so personal repo paths / Jira instances / etc.
+# never get committed to the public repo.
+config.yaml

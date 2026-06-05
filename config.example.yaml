@@ -1,0 +1,85 @@
+# =============================================================================
+# Time Logger — configuration
+# =============================================================================
+# Copy this file to `config.yaml` (which IS committed for now, until the user
+# config dir is moved out of the repo in Milestone 1). Replace the placeholder
+# values with your own. The setup wizard can also write this for you.
+# =============================================================================
+
+# --- Tracked git repositories -----------------------------------------------
+# Time Logger watches these repos for commits + working-tree changes and uses
+# the activity to seed time-log blocks. Set the absolute path to each repo
+# clone on your machine and a short label to display in the UI.
+repos:
+  - path: C:\path\to\your\repo-one
+    label: Example Project One
+  # - path: C:\path\to\another\repo
+  #   label: Example Project Two
+
+# --- Custom (non-repo) project rules ----------------------------------------
+# Match window titles or process names to a project label even when no tracked
+# git repo is involved. Useful for browser-based work (dashboards, BI tools,
+# email-driven workstreams). The first matching rule wins. Delete this section
+# if you don't need custom projects.
+# projects:
+#   - label: Customer X Dashboard
+#     keywords:
+#       - customer-x.atlassian.net
+#       - customer x dashboard
+#     processes:
+#       - olk.exe
+#       - outlook.exe
+
+# --- Activity collector ------------------------------------------------------
+collector:
+  poll_interval_seconds: 30   # how often the tray app samples the active window
+  idle_threshold_seconds: 300 # samples below this idle threshold count as active
+  # Process names whose samples are tracked but NOT counted toward time
+  # (they show in activity logs but stay "idle" in the timeline).
+  excluded_processes: []
+    # - opera.exe
+    # - spotify.exe
+
+# --- LLM polish (optional) ---------------------------------------------------
+# When provider is set and an API key (or CLI) is available, block descriptions
+# from "Auto-seed from work" are rewritten as MR-style markdown by an LLM.
+# Providers: claude_code | anthropic | gemini | off
+llm:
+  provider: off
+  # For anthropic: claude-haiku-4-5 (cheap) or claude-sonnet-4-6 (better).
+  # For gemini:    gemini-2.5-flash-lite (free-tier-friendly).
+  # Ignored for claude_code.
+  model: claude-haiku-4-5
+  max_output_tokens: 800
+  temperature: 0.3
+
+# --- Git author filter -------------------------------------------------------
+# Only count commits authored by these email(s) toward block descriptions.
+# Add additional emails (personal, GitHub noreply, etc.) if you commit under
+# more than one identity. Leave the list empty to count every commit (off).
+git:
+  author_emails: []
+    # - you@example.com
+
+# --- Jira --------------------------------------------------------------------
+jira:
+  base_url: https://your-domain.atlassian.net
+  # Extra JQL queries to merge into the ticket cache alongside the defaults
+  # ("assigned to me" / "recently closed by me"). Use this to include tickets
+  # in a specific project / issue type that aren't necessarily assigned to you
+  # (e.g. management / operational tasks you log time against).
+  # extra_jql:
+  #   - project = ABC AND issuetype = Management AND statusCategory != Done
+
+# --- Google Sheets (optional) ------------------------------------------------
+# Set sheet_id once the wizard creates a weekly log sheet for you.
+sheets:
+  sheet_id: null
+  sheet_title: Jira Time Log
+
+# --- Paths -------------------------------------------------------------------
+# Override these to put the DB / logs somewhere outside the repo
+# (recommended once you set up the user config dir in Milestone 1).
+paths:
+  db: ./db/timelogger.sqlite
+  logs: ./logs
