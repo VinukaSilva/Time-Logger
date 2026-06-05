@@ -178,9 +178,19 @@ def google_oauth_client_path() -> Path:
     return _resolve_path(raw)
 
 
+def sheets_configured() -> bool:
+    """True iff the google-auth libraries are installed and the OAuth client
+    JSON file exists at the configured path."""
+    try:
+        import google.auth  # noqa: F401
+        return google_oauth_client_path().exists()
+    except (ImportError, Exception):
+        return False
+
+
 def sheet_id() -> str | None:
-    return load()["sheets"].get("sheet_id")
+    return (load().get("sheets") or {}).get("sheet_id")
 
 
 def sheet_title() -> str:
-    return load()["sheets"].get("sheet_title", "Jira Time Log")
+    return (load().get("sheets") or {}).get("sheet_title", "Jira Time Log")

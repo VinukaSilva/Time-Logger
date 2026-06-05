@@ -2,9 +2,8 @@ import logging
 import time as time_mod
 from datetime import datetime
 
-from .. import db
+from .. import config, db
 from ..jira_client.client import JiraClient
-from ..sheets_client.client import SheetsClient
 from . import blocks_service
 
 log = logging.getLogger(__name__)
@@ -26,8 +25,18 @@ def submit_day(date_str: str) -> dict:
         return {"submitted": 0, "failed": 0, "skipped": 0, "errors": ["No draft blocks to submit."]}
 
     jira = JiraClient()
-    sheets = SheetsClient()
-    sheets.ensure_sheet()
+
+    # Google Sheets is optional — skip gracefully if not configured or libs missing.
+    sheets = None
+    if config.sheets_configured():
+        try:
+            from ..sheets_client.client import SheetsClient
+            sheets = SheetsClient()
+            sheets.ensure_sheet()
+        except Exception as exc:
+            log.warning("sheets unavailable, skipping: %s", exc)
+            sheets = None
+
     summaries = _ticket_summary_lookup()
 
     submitted = 0
@@ -41,21 +50,27 @@ def submit_day(date_str: str) -> dict:
             result = jira.add_worklog(b["ticket_key"], started, b["minutes"], description)
             worklog_id = str(result.get("id", ""))
 
-            summary, _ = summaries.get(b["ticket_key"], ("", ""))
-            end_dt = datetime.fromtimestamp(b["end_ts"])
-            sheets.append_row(
-                [
-                    date_str,
-                    started.strftime("%H:%M"),
-                    end_dt.strftime("%H:%M"),
-                    b["minutes"],
-                    b["ticket_key"],
-                    summary,
-                    description,
-                    b["project_label"] or "",
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                ]
-            )
+            sheet_row_ts = None
+            if sheets:
+                try:
+                    summary, _ = summaries.get(b["ticket_key"], ("", ""))
+                    end_dt = datetime.fromtimestamp(b["end_ts"])
+                    sheets.append_row(
+                        [
+                            date_str,
+                            started.strftime("%H:%M"),
+                            end_dt.strftime("%H:%M"),
+                            b["minutes"],
+                            b["ticket_key"],
+                            summary,
+                            description,
+                            b["project_label"] or "",
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        ]
+                    )
+                    sheet_row_ts = int(time_mod.time())
+                except Exception as exc:
+                    log.warning("sheets append failed for block %s: %s", b["id"], exc)
 
             now = int(time_mod.time())
             with db.connect() as conn:
@@ -67,7 +82,7 @@ def submit_day(date_str: str) -> dict:
                            submitted_at = ?,
                            updated_at = ?
                        WHERE id = ?""",
-                    (worklog_id, now, now, now, b["id"]),
+                    (worklog_id, sheet_row_ts, now, now, b["id"]),
                 )
             submitted += 1
             log.info("submitted block %s (%s, %dm)", b["id"], b["ticket_key"], b["minutes"])

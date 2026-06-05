@@ -1,12 +1,16 @@
 import logging
 from pathlib import Path
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-
 from .. import config, kv
+
+try:
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from googleapiclient.discovery import build
+    GOOGLE_AVAILABLE = True
+except ImportError:
+    GOOGLE_AVAILABLE = False
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +61,11 @@ def _load_creds() -> Credentials:
 
 class SheetsClient:
     def __init__(self) -> None:
+        if not GOOGLE_AVAILABLE:
+            raise ImportError(
+                "Google API libraries not installed. "
+                "Run: pip install google-auth google-auth-oauthlib google-api-python-client"
+            )
         self.creds = _load_creds()
         self.sheets = build("sheets", "v4", credentials=self.creds, cache_discovery=False)
 
