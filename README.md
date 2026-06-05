@@ -22,29 +22,32 @@ Automated daily time logging from your local machine activity (active window, id
 ## Quick setup
 
 ```bat
-git clone https://github.com/<you>/Time-Logger.git
+git clone https://github.com/VinukaSilva/Time-Logger.git
 cd Time-Logger
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+python run_setup.py
+```
+
+The setup wizard walks you through everything interactively:
+
+1. **Git identity** — auto-detected from your global `git config`, confirms which email(s) should be counted as "yours" when mining commit history.
+2. **Tracked git repositories** — point the wizard at any parent folder and it discovers git repos under it (up to 3 levels deep). Pick which to track and give each one a label.
+3. **Atlassian Jira** — base URL, email, and an API token from <https://id.atlassian.com/manage-profile/security/api-tokens>. The wizard validates the token by calling `/myself`.
+4. **LLM description polish (optional)** — pick `claude_code` (uses your local `claude` CLI, no key), `anthropic` (paste a key from <https://console.anthropic.com>), `gemini` (paste a free-tier key from <https://aistudio.google.com/app/apikey>), or `off`.
+5. **Google Sheets weekly log (optional)** — point at an OAuth client JSON if you want each submitted worklog appended to a weekly spreadsheet, or skip.
+
+The wizard writes `config.yaml` + `.env` atomically. It's safe to re-run any time — each step proposes your current value as the default.
+
+**Prefer to edit by hand?** Copy the templates instead:
+
+```bat
 copy config.example.yaml config.yaml
 copy .env.example .env
 ```
 
-Open `.env` and fill in `JIRA_EMAIL` + `JIRA_API_TOKEN` (and optionally `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`).
-
-Open `config.yaml` and:
-1. Add your tracked git repos under `repos:`
-2. Set `jira.base_url` to your Atlassian instance (e.g. `https://your-org.atlassian.net`)
-3. Set `git.author_emails` to your commit email(s) so only your commits inform descriptions
-
-Then validate the setup:
-
-```bat
-python run_setup.py
-```
-
-This checks Jira auth, caches your tickets, and (if configured) creates the weekly Google Sheet.
+Then open both files and fill in your values; comments in `config.example.yaml` document every field.
 
 ## Running
 
