@@ -74,6 +74,8 @@ The two config files:
 - **`config.yaml`** — repos, Jira instance, LLM provider, collector tuning. See `config.example.yaml` for every field with comments.
 - **`.env`** — secrets (Jira token, LLM API keys). Never commit this. See `.env.example` for the template.
 
+Both files live in the project folder by default, alongside `db/`, `logs/`, and `secrets/`. If you'd rather store personal data outside the repo (e.g. so re-cloning doesn't move it), set `TIMELOGGER_HOME=<absolute path>` in your environment and the loader will look there instead. Both files and the relative paths in `config.yaml` resolve against that directory.
+
 Key config sections:
 
 | Section | What it controls |

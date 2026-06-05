@@ -1,3 +1,15 @@
+"""Configuration loader.
+
+User config + DB + logs live INSIDE the project folder by default. Everything
+the app needs (config.yaml, .env, db/, logs/, secrets/) sits next to the code,
+so the whole tool is one self-contained directory.
+
+If you'd rather keep personal data outside the repo (Windows AppData style,
+multi-user machine, etc.) set `TIMELOGGER_HOME=<absolute path>` in your
+environment and the loader will look there instead.
+
+Either way, none of these files are committed — `.gitignore` excludes them.
+"""
 import os
 from pathlib import Path
 
@@ -5,25 +17,70 @@ import yaml
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+
+
+def _user_home() -> Path:
+    """Where personal config + data lives. Defaults to the project root so
+    every user-state file sits next to the code. Override with
+    TIMELOGGER_HOME=<absolute path> to relocate (e.g. to %LOCALAPPDATA%)."""
+    override = os.environ.get("TIMELOGGER_HOME")
+    if override:
+        return Path(override).expanduser().resolve()
+    return ROOT
+
+
+USER_HOME = _user_home()
+USER_HOME.mkdir(parents=True, exist_ok=True)
+
+
+# Load .env from USER_HOME.
+_env_path = USER_HOME / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
+
 
 _cfg: dict | None = None
+_cfg_path: Path | None = None
+
+
+def _config_path() -> Path:
+    global _cfg_path
+    if _cfg_path is not None:
+        return _cfg_path
+    user_cfg = USER_HOME / "config.yaml"
+    if not user_cfg.exists():
+        raise FileNotFoundError(
+            f"No config.yaml found at:\n  {user_cfg}\n\n"
+            f"Run `python run_setup.py` to create one, or copy the template:\n"
+            f'  copy "{ROOT / "config.example.yaml"}" "{user_cfg}"'
+        )
+    _cfg_path = user_cfg
+    return user_cfg
 
 
 def load() -> dict:
     global _cfg
     if _cfg is None:
-        with open(ROOT / "config.yaml", "r", encoding="utf-8") as f:
+        with open(_config_path(), "r", encoding="utf-8") as f:
             _cfg = yaml.safe_load(f)
     return _cfg
 
 
+def _resolve_path(raw: str) -> Path:
+    """Absolute paths are used as-is; relative paths are resolved against
+    USER_HOME (which defaults to the project root)."""
+    p = Path(raw).expanduser()
+    if p.is_absolute():
+        return p.resolve()
+    return (USER_HOME / p).resolve()
+
+
 def db_path() -> Path:
-    return (ROOT / load()["paths"]["db"]).resolve()
+    return _resolve_path(load()["paths"]["db"])
 
 
 def logs_dir() -> Path:
-    return (ROOT / load()["paths"]["logs"]).resolve()
+    return _resolve_path(load()["paths"]["logs"])
 
 
 def repos() -> list[dict]:
@@ -101,7 +158,8 @@ def jira_token() -> str:
 
 
 def google_oauth_client_path() -> Path:
-    return (ROOT / os.environ.get("GOOGLE_OAUTH_CLIENT_JSON", "./secrets/google_oauth_client.json")).resolve()
+    raw = os.environ.get("GOOGLE_OAUTH_CLIENT_JSON", "./secrets/google_oauth_client.json")
+    return _resolve_path(raw)
 
 
 def sheet_id() -> str | None:

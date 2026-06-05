@@ -78,8 +78,12 @@ sheets:
   sheet_title: Jira Time Log
 
 # --- Paths -------------------------------------------------------------------
-# Override these to put the DB / logs somewhere outside the repo
-# (recommended once you set up the user config dir in Milestone 1).
+# Relative paths are resolved against your Time Logger home directory.
+# By default that's the project folder itself — so `db/timelogger.sqlite`
+# below means `<repo>/db/timelogger.sqlite`. You can override the home
+# directory with the TIMELOGGER_HOME environment variable if you want your
+# data stored elsewhere (e.g. on a different drive). Use absolute paths to
+# place individual items anywhere on disk.
 paths:
-  db: ./db/timelogger.sqlite
-  logs: ./logs
+  db: db/timelogger.sqlite
+  logs: logs
