@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Time Logger — Setup</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("tl.theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="setup-body">
+
+<header class="setup-header">
+  <div class="brand brand-v2" aria-label="Time Logger">
+    <svg class="brand-mark-v2" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="2"  y="5"  width="20" height="4" rx="1.2" fill="var(--accent)"/>
+      <rect x="2"  y="11" width="13" height="4" rx="1.2" fill="var(--accent)" opacity="0.55"/>
+      <rect x="2"  y="17" width="17" height="4" rx="1.2" fill="var(--accent)" opacity="0.8"/>
+    </svg>
+    <span class="brand-wordmark">Time Logger</span>
+    <span class="brand-sep-v2">/</span>
+    <span class="brand-page-v2">Setup</span>
+  </div>
+</header>
+
+<main class="setup-main">
+  <div class="setup-intro">
+    {% if already_configured %}
+      <h1>Update settings</h1>
+      <p>A config already exists at <code>{{ user_home }}/config.yaml</code>. Submitting this form will overwrite it.</p>
+    {% else %}
+      <h1>Welcome — let's get you set up.</h1>
+      <p>Five short steps. We'll write <code>config.yaml</code> + <code>.env</code> to <code>{{ user_home }}</code> when you're done.</p>
+    {% endif %}
+  </div>
+
+  {% if errors %}
+  <div class="setup-errors">
+    <strong>Couldn't save — please fix:</strong>
+    <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  <form id="setup-form" method="post" action="/setup" class="setup-form">
+
+    <section class="setup-section">
+      <h2><span class="step-no">1</span> Your git author email</h2>
+      <p class="hint">Time Logger only counts commits authored by you when building block descriptions. Add one or more emails (work, personal, GitHub noreply).</p>
+      {% if detected_email %}
+        <p class="hint">Detected from <code>git config --global user.email</code>: <strong>{{ detected_email }}</strong></p>
+      {% endif %}
+      <textarea name="git_emails" rows="3" placeholder="vinuka@example.com&#10;you@gmail.com">{{ detected_email or '' }}</textarea>
+      <p class="hint">One email per line, or comma-separated.</p>
+    </section>
+
+    <section class="setup-section">
+      <h2><span class="step-no">2</span> Tracked git repositories</h2>
+      <p class="hint">Point at a parent folder. We'll walk up to 3 levels deep to find git repos. Pick the ones you want tracked and label them.</p>
+      <div class="setup-row">
+        <input type="text" id="probe-parent" placeholder="C:\Projects" autocomplete="off">
+        <button type="button" id="probe-btn" class="btn btn-sm">Discover repos</button>
+      </div>
+      <div id="probe-status" class="hint"></div>
+      <div id="repo-list" class="repo-list"></div>
+    </section>
+
+    <section class="setup-section">
+      <h2><span class="step-no">3</span> Atlassian Jira</h2>
+      <p class="hint">Your Atlassian instance + an API token from <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">id.atlassian.com</a>.</p>
+      <label class="field">
+        <span>Base URL</span>
+        <input type="url" name="jira_base_url" placeholder="https://your-org.atlassian.net" required value="{{ (existing_cfg.get('jira') or {}).get('base_url', '') }}">
+      </label>
+      <label class="field">
+        <span>Email</span>
+        <input type="email" name="jira_email" placeholder="you@example.com" required value="{{ existing_env.get('JIRA_EMAIL', '') or detected_email or '' }}">
+      </label>
+      <label class="field">
+        <span>API token</span>
+        <input type="password" name="jira_token" placeholder="ATATT3xFfGF..." required>
+      </label>
+      <div class="setup-row">
+        <button type="button" id="test-jira-btn" class="btn btn-sm">Test connection</button>
+        <span id="test-jira-status" class="hint"></span>
+      </div>
+    </section>
+
+    <section class="setup-section">
+      <h2><span class="step-no">4</span> LLM description polish <span class="hint-inline">(optional)</span></h2>
+      <p class="hint">When enabled, auto-seeded block descriptions get rewritten by an LLM as MR-style markdown. Skip with "Disabled".</p>
+      <label class="field">
+        <span>Provider</span>
+        <select name="llm_provider" id="llm_provider">
+          <option value="claude_code" {% if has_claude %}selected{% endif %}>claude_code — local Claude CLI{% if has_claude %} (detected){% else %} (not found){% endif %}</option>
+          <option value="anthropic">anthropic — Anthropic API (needs key)</option>
+          <option value="gemini">gemini — Google AI Studio free tier (needs key)</option>
+          <option value="off" {% if not has_claude %}selected{% endif %}>off — disabled</option>
+        </select>
+      </label>
+      <label class="field llm-conditional llm-anthropic" hidden>
+        <span>Anthropic API key</span>
+        <input type="password" name="anthropic_api_key" placeholder="sk-ant-...">
+      </label>
+      <label class="field llm-conditional llm-gemini" hidden>
+        <span>Gemini API key</span>
+        <input type="password" name="gemini_api_key" placeholder="AIza...">
+      </label>
+    </section>
+
+    <section class="setup-section">
+      <h2><span class="step-no">5</span> Google Sheets weekly log <span class="hint-inline">(optional)</span></h2>
+      <p class="hint">Append every submitted worklog to a weekly Google Sheet. Requires an OAuth client JSON from <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a> (Desktop app).</p>
+      <label class="field checkbox-field">
+        <input type="checkbox" name="sheets_enabled" id="sheets_enabled" value="1">
+        <span>Enable Sheets</span>
+      </label>
+      <label class="field sheets-conditional" hidden>
+        <span>Path to OAuth client JSON</span>
+        <input type="text" name="google_oauth_path" value="./secrets/google_oauth_client.json">
+      </label>
+    </section>
+
+    <div class="setup-foot">
+      <button type="submit" class="btn btn-primary btn-lg">Save and start</button>
+      <span class="hint">Writes <code>{{ user_home }}\config.yaml</code> + <code>.env</code></span>
+    </div>
+  </form>
+</main>
+
+<script src="/static/setup.js"></script>
+</body>
+</html>

@@ -66,6 +66,22 @@ def load() -> dict:
     return _cfg
 
 
+def is_configured() -> bool:
+    """True iff a config.yaml exists at the expected location. Used by the
+    web onboarding middleware to detect fresh-clone state and redirect to
+    /setup before any request can hit code that assumes config is loaded."""
+    return (USER_HOME / "config.yaml").exists()
+
+
+def invalidate_cache() -> None:
+    """Drop the in-memory cached config so the next `load()` re-reads from disk.
+    Called by the web setup handler after writing config.yaml so the running
+    process picks up the new values without a restart."""
+    global _cfg, _cfg_path
+    _cfg = None
+    _cfg_path = None
+
+
 def _resolve_path(raw: str) -> Path:
     """Absolute paths are used as-is; relative paths are resolved against
     USER_HOME (which defaults to the project root)."""

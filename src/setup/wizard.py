@@ -94,7 +94,7 @@ def _load_existing_env() -> dict[str, str]:
     return {k: v or "" for k, v in dotenv_values(env_path).items()}
 
 
-def _git_global(key: str) -> str:
+def git_global(key: str) -> str:
     """Read a `git config --global` value or empty string."""
     try:
         r = subprocess.run(["git", "config", "--global", key], capture_output=True, text=True, timeout=5)
@@ -103,13 +103,57 @@ def _git_global(key: str) -> str:
         return ""
 
 
-def _claude_code_on_path() -> bool:
+def claude_code_on_path() -> bool:
     """Return True if a `claude` CLI is reachable on PATH."""
     try:
         r = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=5)
         return r.returncode == 0
     except Exception:
         return False
+
+
+# Back-compat aliases — the underscore versions used to be private; keep them
+# pointing at the public ones so any external code that imported them still works.
+_git_global = git_global
+_claude_code_on_path = claude_code_on_path
+
+
+# Public re-exports (kept underscore-private internally for organisation).
+def load_existing_config() -> dict:
+    """Return the current config.yaml as a dict, or {} if it doesn't exist."""
+    return _load_existing_config()
+
+
+def load_existing_env() -> dict[str, str]:
+    """Return the current .env as a dict, or {} if it doesn't exist."""
+    return _load_existing_env()
+
+
+def validate_jira_credentials(base_url: str, email: str, token: str, timeout: int = 15) -> dict:
+    """Hit /rest/api/3/myself to test creds. Returns {ok, display_name, email}
+    on success, {ok=False, status, detail} on failure. Used by both the CLI
+    wizard and the web onboarding 'Test connection' button."""
+    import requests
+    base_url = (base_url or "").rstrip("/")
+    if not base_url or not email or not token:
+        return {"ok": False, "status": 0, "detail": "Missing base URL, email, or token."}
+    try:
+        r = requests.get(
+            f"{base_url}/rest/api/3/myself",
+            auth=(email, token),
+            headers={"Accept": "application/json"},
+            timeout=timeout,
+        )
+    except Exception as e:
+        return {"ok": False, "status": 0, "detail": f"Could not reach Jira: {e}"}
+    if not r.ok:
+        return {"ok": False, "status": r.status_code, "detail": r.text[:200]}
+    me = r.json()
+    return {
+        "ok": True,
+        "display_name": me.get("displayName", ""),
+        "email": me.get("emailAddress", ""),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +170,7 @@ def step_git_identity(existing_cfg: dict) -> list[str]:
     print("    descriptions. Add one or more emails (work, personal, GitHub noreply).")
 
     current = (existing_cfg.get("git", {}) or {}).get("author_emails") or []
-    detected = _git_global("user.email")
+    detected = git_global("user.email")
     if detected and detected not in current:
         current = current + [detected]
     elif not current and detected:
@@ -213,18 +257,14 @@ def step_jira(existing_cfg: dict, existing_env: dict[str, str]) -> tuple[str, st
     token_default = existing_env.get("JIRA_API_TOKEN") or ""
     token = ask_secret("API token", default=token_default or None)
 
-    # Validate by calling /myself.
-    try:
-        import requests
-        r = requests.get(f"{base_url}/rest/api/3/myself", auth=(email, token),
-                         headers={"Accept": "application/json"}, timeout=15)
-        if r.ok:
-            me = r.json()
-            print_done(f"authenticated as {me.get('displayName')} ({me.get('emailAddress')})")
-        else:
-            print_warn(f"Jira responded {r.status_code}. Token / email may be wrong, but values were saved anyway.")
-    except Exception as e:
-        print_warn(f"Could not reach Jira: {e}. Values saved; check connectivity later.")
+    # Validate by calling /myself (shared helper, also used by web onboarding).
+    result = validate_jira_credentials(base_url, email, token)
+    if result["ok"]:
+        print_done(f"authenticated as {result['display_name']} ({result['email']})")
+    elif result["status"]:
+        print_warn(f"Jira responded {result['status']}. Token / email may be wrong, but values were saved.")
+    else:
+        print_warn(f"{result['detail']} Values saved; check connectivity later.")
 
     return base_url, email, token
 
@@ -234,7 +274,7 @@ def step_llm(existing_cfg: dict, existing_env: dict[str, str]) -> tuple[str, str
     print("    When enabled, auto-seeded block descriptions get rewritten by an LLM")
     print("    into MR-style markdown. Pick one provider or skip.")
 
-    has_claude = _claude_code_on_path()
+    has_claude = claude_code_on_path()
     current = (existing_cfg.get("llm", {}) or {}).get("provider") or ("claude_code" if has_claude else "off")
     options = [
         f"claude_code   — local `claude` CLI (no API key){'  [detected]' if has_claude else '  [not found]'}",

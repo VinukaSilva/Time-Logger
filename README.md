@@ -21,6 +21,25 @@ Automated daily time logging from your local machine activity (active window, id
 
 ## Quick setup
 
+Two flavours of setup ship in the box — pick whichever you prefer.
+
+### Option A — Web onboarding (no terminal prompts)
+
+```bat
+git clone https://github.com/VinukaSilva/Time-Logger.git
+cd Time-Logger
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python run_web.py
+```
+
+The first time you visit `http://127.0.0.1:5000`, the web server detects there's no config yet and redirects you to a `/setup` page. Fill in the five sections (git emails, repos, Jira, LLM provider, Sheets), click **Save and start** — `config.yaml` + `.env` get written atomically and you land on the day view.
+
+The setup page includes "Discover repos" (give it a parent path, it lists git repos under it) and "Test connection" (validates Jira creds against `/myself` before saving). Re-run any time by visiting `/setup` directly.
+
+### Option B — CLI wizard
+
 ```bat
 git clone https://github.com/VinukaSilva/Time-Logger.git
 cd Time-Logger
@@ -30,7 +49,7 @@ pip install -r requirements.txt
 python run_setup.py
 ```
 
-The setup wizard walks you through everything interactively:
+The CLI wizard walks you through everything interactively:
 
 1. **Git identity** — auto-detected from your global `git config`, confirms which email(s) should be counted as "yours" when mining commit history.
 2. **Tracked git repositories** — point the wizard at any parent folder and it discovers git repos under it (up to 3 levels deep). Pick which to track and give each one a label.
