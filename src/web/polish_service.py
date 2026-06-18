@@ -29,8 +29,15 @@ def _build_prompt(signals: dict, current: str) -> str:
 
     parts: list[str] = []
     parts.append(
-        "You are summarizing a software-engineering work session for a Jira worklog "
-        "comment. Write the summary as if you were the developer who did the work."
+        "You are generating a Jira worklog description for a software-engineering work session.\n"
+        "Rules (follow strictly):\n"
+        "- Write in passive voice (e.g. 'Fixed X', 'Updated Y', 'Investigated Z').\n"
+        "- Do NOT use first person (no 'I', 'we', 'my').\n"
+        "- Do NOT use third person ('the developer', 'the engineer', 'he', 'she').\n"
+        "- Do NOT use speculation words: 'likely', 'probably', 'may have', 'seems to', 'appears to', 'possibly'.\n"
+        "- Do NOT include meta-commentary about the nature of the session (e.g. 'This was an investigation block').\n"
+        "- State only what the signals directly show — commits, files changed, tasks performed.\n"
+        "- Be concise and factual. 3–8 bullet points is ideal."
     )
     parts.append(f"Project: {project}")
     parts.append(f"Duration: {duration} minutes")
@@ -64,14 +71,13 @@ def _build_prompt(signals: dict, current: str) -> str:
         parts.append("Observed window titles: " + " | ".join(t[:80] for t in titles[:5]))
 
     if current and current.strip():
-        parts.append("\nThe developer's current structured draft (you may use, refine, or replace):")
+        parts.append("\nExisting structured draft (refine or replace, do not copy meta-commentary):")
         parts.append("```\n" + current.strip() + "\n```")
 
     parts.append(
-        "\nWrite the summary in markdown. Use short bullet points grouped by topic when "
-        "useful. Mention specific files / commits / functions where they help. Match the "
-        "tone of a thoughtful merge-request description. Be concise — 3–10 lines is ideal. "
-        "Do NOT include preamble, headings like 'Summary:', a sign-off, or invented details. "
+        "\nOutput the Jira worklog description in markdown only. Use short bullet points. "
+        "Mention specific files, commits, or functions where relevant. "
+        "No preamble, no 'Summary:' heading, no sign-off, no invented details. "
         "Output the description only."
     )
     return "\n".join(parts)
