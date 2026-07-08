@@ -120,7 +120,22 @@ def _describe_segment(seg, llm_enabled: bool) -> tuple[str, bool, bool, str | No
             break
 
     if not repo_path:
-        # Thin signal — don't burn an API call on app names / window titles.
+        if llm_enabled and seg.top_titles:
+            signals = describer.gather_signals(
+                int(seg.start.timestamp()),
+                int(seg.end.timestamp()),
+                seg.project_label,
+                None,
+                seg.git_events,
+                top_titles=seg.top_titles,
+            )
+            structured = describer.minimal_description(seg.top_apps, seg.top_titles, seg.project_label)
+            try:
+                return polish_service.polish_signals(signals, structured), True, True, None
+            except LLMUnavailable as e:
+                log.warning("polish unavailable for %s-%s, using minimal fallback: %s", seg.start, seg.end, e)
+            except Exception as e:
+                log.exception("polish failed for no-repo segment %s-%s", seg.start, seg.end)
         return describer.minimal_description(seg.top_apps, seg.top_titles, seg.project_label), False, False, None
 
     signals = describer.gather_signals(
@@ -158,7 +173,8 @@ def seed_from_segments(date_str: str, segments) -> dict:
     LLM failures fall back silently to the structured formatter so seeding
     never aborts; the counters above let the caller surface what happened.
     """
-    if list_for_date(date_str):
+    existing = list_for_date(date_str)
+    if any(b["status"] == "draft" for b in existing):
         return {"created": 0, "polished": 0, "attempted": 0,
                 "llm_enabled": polish_service.is_enabled(), "errors": []}
     llm_enabled = polish_service.is_enabled()
