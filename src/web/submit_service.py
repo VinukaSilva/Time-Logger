@@ -28,7 +28,7 @@ def submit_day(date_str: str) -> dict:
 
     # Google Sheets is optional — skip gracefully if not configured or libs missing.
     sheets = None
-    if config.sheets_configured():
+    if config.sheets_configured() and config.sheet_id():
         try:
             from ..sheets_client.client import SheetsClient
             sheets = SheetsClient()
