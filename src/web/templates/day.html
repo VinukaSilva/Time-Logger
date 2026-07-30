@@ -307,7 +307,7 @@
       {% set submitted = b.status == 'submitted' %}
       {# Card carries both .block-card (v2 styling) and .block-row (preserves
          keyboard-nav + bulk-edit hooks from app.js). #}
-      <div class="block-card block-row {% if submitted %}submitted{% endif %} {% if empty_desc and not submitted %}has-empty{% endif %}"
+      <div id="block-{{ b.id }}" class="block-card block-row {% if submitted %}submitted{% endif %} {% if empty_desc and not submitted %}has-empty{% endif %}"
            data-block-id="{{ b.id }}"
            onclick="document.getElementById('edit-{{ b.id }}').showModal()">
         <div class="block-card-head">

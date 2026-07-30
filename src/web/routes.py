@@ -571,7 +571,7 @@ def update_block(
         description=description,
         project_label=project_label or None,
     )
-    return RedirectResponse(f"/day/{ds}", status_code=303)
+    return RedirectResponse(f"/day/{ds}#block-{block_id}", status_code=303)
 
 
 @router.post("/block/{block_id}/delete", response_class=HTMLResponse)
