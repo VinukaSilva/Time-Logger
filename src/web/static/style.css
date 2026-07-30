@@ -1086,12 +1086,22 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
   text-shadow: 0 0 2px rgba(0,0,0,0.6);
   pointer-events: none;
 }
-.heatmap-cell.submitted::after {
+/* Green tick only when every block for the day is submitted. */
+.heatmap-cell .heatmap-mark.complete { color: var(--ok); }
+/* Yellow warning when the day is only partially logged — blocks still pending. */
+.heatmap-cell .heatmap-mark.partial { color: var(--warn); }
+/* Partially-logged days get an amber tint. Fully-logged and seeded-only days
+   keep the normal orange activity shading — only the tick + border change. */
+.heatmap-cell.partial { background: oklch(0.78 0.14 75 / 0.30); }
+/* Ring around the cell: green when fully logged, amber when blocks pending. */
+.heatmap-cell.complete::after,
+.heatmap-cell.partial::after {
   content: ""; position: absolute; inset: 0;
-  border: 1.5px solid var(--cool);
+  border: 1.5px solid var(--ok);
   border-radius: 2px;
   pointer-events: none;
 }
+.heatmap-cell.partial::after { border-color: var(--warn); }
 .heatmap-labels { display: flex; justify-content: space-between; margin-top: 6px; font-size: 9px; color: var(--muted-2); font-family: var(--font-mono); }
 
 /* rail kv rows */

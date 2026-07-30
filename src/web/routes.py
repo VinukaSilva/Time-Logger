@@ -149,12 +149,14 @@ def _heatmap(anchor: date) -> list[list[dict]]:
 
     totals: dict[str, int] = {}
     submitted_counts: dict[str, int] = {}
+    block_counts: dict[str, int] = {}
     if all_dates:
         placeholders = ",".join(["?"] * len(all_dates))
         with db.connect() as conn:
             rows = conn.execute(
                 f"SELECT date, "
                 f"COALESCE(SUM(minutes), 0) AS total, "
+                f"COUNT(*) AS blocks, "
                 f"SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) AS submitted "
                 f"FROM time_blocks WHERE date IN ({placeholders}) GROUP BY date",
                 all_dates,
@@ -162,6 +164,7 @@ def _heatmap(anchor: date) -> list[list[dict]]:
         for r in rows:
             totals[r["date"]] = int(r["total"] or 0)
             submitted_counts[r["date"]] = int(r["submitted"] or 0)
+            block_counts[r["date"]] = int(r["blocks"] or 0)
 
     for row in grid:
         for cell in row:
@@ -181,7 +184,20 @@ def _heatmap(anchor: date) -> list[list[dict]]:
                 level = "l4"
             cell["minutes"] = m
             cell["level"] = level
-            cell["submitted"] = submitted_counts.get(cell["date"], 0) > 0
+            # Day-completion state: green tick only when *every* block is
+            # submitted; yellow warning when some are still pending. A day with
+            # zero submitted blocks gets no mark.
+            n_blocks = block_counts.get(cell["date"], 0)
+            n_submitted = submitted_counts.get(cell["date"], 0)
+            if n_blocks > 0 and n_submitted >= n_blocks:
+                cell["submit_state"] = "complete"
+            elif n_submitted > 0:
+                # Some blocks logged but not all — the day is only partially done.
+                # Days with zero submitted keep the normal orange activity shading.
+                cell["submit_state"] = "partial"
+            else:
+                cell["submit_state"] = ""
+            cell["pending"] = max(0, n_blocks - n_submitted)
             cell["is_future"] = is_future
             cell["is_today"] = cell["date"] == today_iso
             cell["is_selected"] = cell["date"] == anchor_iso

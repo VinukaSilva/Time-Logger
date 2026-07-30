@@ -547,9 +547,9 @@
           {% if cell.is_future %}
             <div class="heatmap-cell empty" title="future"></div>
           {% else %}
-            <a class="heatmap-cell {{ cell.level }} {% if cell.is_today %}today{% endif %} {% if cell.is_selected %}selected{% endif %} {% if cell.submitted %}submitted{% endif %}"
+            <a class="heatmap-cell {{ cell.level }} {% if cell.is_today %}today{% endif %} {% if cell.is_selected %}selected{% endif %} {% if cell.submit_state %}{{ cell.submit_state }}{% endif %}"
                href="/day/{{ cell.date }}"
-               title="{{ cell.date }} · {{ cell.minutes }}m{% if cell.submitted %} · submitted{% endif %}">{% if cell.submitted %}<span class="heatmap-mark" aria-hidden="true">&#10003;</span>{% endif %}</a>
+               title="{{ cell.date }} · {{ cell.minutes }}m{% if cell.submit_state == 'complete' %} · all blocks logged{% elif cell.submit_state == 'partial' %} · {{ cell.pending }} block{{ 's' if cell.pending != 1 else '' }} still pending{% endif %}">{% if cell.submit_state == 'complete' %}<span class="heatmap-mark complete" aria-hidden="true">&#10003;</span>{% elif cell.submit_state == 'partial' %}<span class="heatmap-mark partial" aria-hidden="true">!</span>{% endif %}</a>
           {% endif %}
         {% endfor %}
       {% endfor %}
