@@ -23,6 +23,11 @@ log = logging.getLogger(__name__)
 # Generous per-call ceiling: a 5–10 KB prompt + cold-start + thinking.
 _TIMEOUT_SECONDS = 120
 
+# Windows: keep each `claude` CLI call from flashing its own console window.
+# The web service runs under pythonw (no console), so every child console app
+# would otherwise pop a new window and steal focus — once per block on seed.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 class ClaudeCodeClient(LLMClient):
     def __init__(self, binary: str):
@@ -39,6 +44,7 @@ class ClaudeCodeClient(LLMClient):
                 text=True,
                 encoding="utf-8",
                 timeout=_TIMEOUT_SECONDS,
+                creationflags=_NO_WINDOW,
             )
         except FileNotFoundError as e:
             raise LLMUnavailable(
