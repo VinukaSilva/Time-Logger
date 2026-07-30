@@ -1,7 +1,35 @@
+import re
 from pathlib import Path
 
 from .. import claude_history
 from ..git_scanner import diffs
+
+
+# Matches Azure Data Factory browser tab titles of the form:
+#   "PipelineName - Author - FactoryName - Microsoft Azure"
+#   "PipelineName - Monitor - FactoryName"
+#   "PipelineName | Author - FactoryName - Microsoft Azure"
+# Captures group 1 = pipeline/resource name (before the ADF section keyword).
+_ADF_SECTION_RE = re.compile(
+    r"^(.+?)\s*[-–|]\s*"
+    r"(?:Author|Monitor|Pipeline\s+runs?|Debug(?:\s+run)?|Trigger(?:\s+runs?)?|Manage|Data\s+flows?)",
+    re.IGNORECASE,
+)
+
+
+def _extract_adf_pipelines(titles: list[str]) -> list[str]:
+    """Return distinct pipeline/resource names parsed from ADF browser tab titles."""
+    seen: set[str] = set()
+    names: list[str] = []
+    for t in titles:
+        m = _ADF_SECTION_RE.match(t)
+        if not m:
+            continue
+        name = m.group(1).strip().rstrip("-–|").strip()
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            names.append(name)
+    return names
 
 
 def _dedup(xs: list[str]) -> list[str]:
@@ -86,8 +114,23 @@ def minimal_description(
     if not titles:
         return header
 
-    bullets = "\n".join(f"  • {t[:160]}" for t in titles)
-    return f"{header}\n\nActivity:\n{bullets}"
+    adf_pipelines = _extract_adf_pipelines(titles)
+    non_adf = [t for t in titles if not _ADF_SECTION_RE.match(t)]
+
+    lines = [header, ""]
+    if adf_pipelines:
+        lines.append(f"Azure Data Factory pipelines: {', '.join(adf_pipelines)}")
+    if non_adf:
+        if adf_pipelines:
+            lines.append("")
+        lines.append("Activity:")
+        for t in non_adf:
+            lines.append(f"  • {t[:160]}")
+    elif not adf_pipelines:
+        lines.append("Activity:")
+        for t in titles:
+            lines.append(f"  • {t[:160]}")
+    return "\n".join(lines)
 
 
 def gather_signals(
@@ -133,6 +176,7 @@ def gather_signals(
 
     duration_min = max(1, (end_ts - start_ts) // 60)
 
+    top_titles_list = (top_titles or [])[:8]
     return {
         "project_label": project_label or "",
         "duration_min": duration_min,
@@ -144,7 +188,8 @@ def gather_signals(
         "claude_bash_cmds": cc["bash_cmds"][:10],
         "claude_searches": cc["searches"][:5],
         "working_tree_files": working_tree,
-        "top_titles": (top_titles or [])[:8],
+        "top_titles": top_titles_list,
+        "adf_pipelines": _extract_adf_pipelines(top_titles_list),
     }
 
 

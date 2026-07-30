@@ -31,12 +31,14 @@ def _build_prompt(signals: dict, current: str) -> str:
     parts.append(
         "You are generating a Jira worklog description for a software-engineering work session.\n"
         "Rules (follow strictly):\n"
-        "- Write in passive voice (e.g. 'Fixed X', 'Updated Y', 'Investigated Z').\n"
+        "- Write in passive voice (e.g. 'Fixed X', 'Reviewed Y', 'Tested Z', 'Checked A').\n"
         "- Do NOT use first person (no 'I', 'we', 'my').\n"
         "- Do NOT use third person ('the developer', 'the engineer', 'he', 'she').\n"
         "- Do NOT use speculation words: 'likely', 'probably', 'may have', 'seems to', 'appears to', 'possibly'.\n"
-        "- Do NOT include meta-commentary about the nature of the session (e.g. 'This was an investigation block').\n"
-        "- State only what the signals directly show — commits, files changed, tasks performed.\n"
+        "- Do NOT include meta-commentary about the nature of the session.\n"
+        "- Do NOT mention the absence of commits, code changes, or any signals — if nothing was coded, describe the activity from the browser pages instead.\n"
+        "- When code signals are present (commits, files, Claude tasks), describe them specifically.\n"
+        "- When only browser/app pages are available, use the page names to write concrete worklog entries — e.g. 'Reviewed chat UI on Knowledge Hive', 'Tested admin panel', 'Checked pipeline run in ADF'. Treat page titles as direct evidence of what was reviewed or tested.\n"
         "- Be concise and factual. 3–8 bullet points is ideal."
     )
     parts.append(f"Project: {project}")
@@ -67,8 +69,11 @@ def _build_prompt(signals: dict, current: str) -> str:
         parts.append("Code searches: " + " | ".join(searches[:4]))
     if working_tree:
         parts.append("Uncommitted working-tree changes touched: " + ", ".join(working_tree[:10]))
+    adf_pipelines = signals.get("adf_pipelines") or []
+    if adf_pipelines:
+        parts.append("Azure Data Factory pipelines accessed: " + ", ".join(adf_pipelines))
     if titles:
-        parts.append("Observed window titles: " + " | ".join(t[:80] for t in titles[:5]))
+        parts.append("Browser/app pages open during this session: " + " | ".join(t[:80] for t in titles[:8]))
 
     if current and current.strip():
         parts.append("\nExisting structured draft (refine or replace, do not copy meta-commentary):")
