@@ -12,6 +12,11 @@ log = logging.getLogger(__name__)
 
 DEFAULT_JQL = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
 RECENT_CLOSED_JQL = "assignee = currentUser() AND statusCategory = Done AND resolved >= -30d ORDER BY updated DESC"
+# Catches tickets handed off to QA after implementation: once reassigned away
+# from us we drop off the assignee queries above, but we're added as a
+# watcher, so this keeps them time-loggable until they're actually Done.
+WATCHER_JQL = "watcher = currentUser() AND statusCategory != Done ORDER BY updated DESC"
+WATCHER_RECENT_CLOSED_JQL = "watcher = currentUser() AND statusCategory = Done AND resolved >= -30d ORDER BY updated DESC"
 
 
 class JiraClient:
@@ -55,7 +60,7 @@ class JiraClient:
         return issues
 
     def my_tickets(self) -> list[dict]:
-        queries = [DEFAULT_JQL, RECENT_CLOSED_JQL] + config.jira_extra_jql()
+        queries = [DEFAULT_JQL, RECENT_CLOSED_JQL, WATCHER_JQL, WATCHER_RECENT_CLOSED_JQL] + config.jira_extra_jql()
         seen: set[str] = set()
         out: list[dict] = []
         for jql in queries:
