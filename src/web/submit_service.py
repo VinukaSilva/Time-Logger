@@ -45,7 +45,7 @@ def submit_day(date_str: str) -> dict:
 
     for b in ready:
         try:
-            started = datetime.fromtimestamp(b["start_ts"])
+            started = datetime.fromtimestamp(b["start_ts"]).astimezone()
             description = b["description"] or f"Work on {b['ticket_key']}"
             result = jira.add_worklog(b["ticket_key"], started, b["minutes"], description)
             worklog_id = str(result.get("id", ""))
