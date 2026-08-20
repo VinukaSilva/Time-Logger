@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 
+{# Mutations here pair `action` with a matching `hx-post`: htmx swaps the live
+   regions in place (see the swap contract on .app in base.html), and without JS
+   the same form falls back to a plain POST + redirect. #}
+
 {# Reusable ticket combobox: hidden input + trigger button + searchable panel
    with rows that show a real colored status pill (not just colored text).
    form_id: optional value for the `form=` attribute on the hidden input —
@@ -62,7 +66,7 @@
 {% block ribbon %}
 {# v2 ribbon — taller, gradient backdrop, zoom pills, drag-to-create.
    Bars carry data-start-min / data-end-min so JS can reposition them on zoom. #}
-<div class="ribbon-wrap ribbon-wrap-v2" data-day-iso="{{ date }}">
+<div class="ribbon-wrap ribbon-wrap-v2" id="ribbon-live" hx-swap-oob="true" data-day-iso="{{ date }}">
   <div class="ribbon-head ribbon-head-v2">
     <div class="ribbon-title-v2">
       <strong>{{ 'Today' if date == today else formatted_date }}'s timeline</strong>
@@ -93,10 +97,18 @@
     </div>
     <div class="draft-row" id="draft-row">
       {% for b in ribbon_drafts %}
+        {# Draft bars carry their block id so a double-click opens the editor and
+           the edge handles know which block to retime. Submitted bars are inert. #}
         <div class="draft-bar {{ b.status }}"
              style="left:{{ b.left_pct }}%; width:{{ b.width_pct }}%"
+             data-block-id="{{ b.id }}"
              data-start-hm="{{ b.start_hm }}" data-end-hm="{{ b.end_hm }}"
-             title="{{ b.start_hm }}–{{ b.end_hm }} · {{ b.ticket or 'unassigned' }}"></div>
+             title="{{ b.start_hm }}–{{ b.end_hm }} · {{ b.ticket or 'unassigned' }}{% if b.status == 'submitted' %} · synced{% else %} · drag the edges to adjust{% endif %}">
+          {% if b.status != 'submitted' %}
+            <span class="draft-handle start" data-edge="start" title="Drag to change the start time"></span>
+            <span class="draft-handle end" data-edge="end" title="Drag to change the end time"></span>
+          {% endif %}
+        </div>
       {% endfor %}
     </div>
     <div class="git-row" id="git-row">
@@ -117,10 +129,11 @@
       <div class="ribbon-now" id="ribbon-now" style="left:{{ now_pct }}%"></div>
     {% endif %}
     <div class="ghost-block" id="ribbon-ghost" hidden></div>
-    <div class="drag-hint">drag the track to draft a block</div>
+    <div class="drag-hint">drag the track to draft &middot; drag a bar's edge to retime it</div>
   </div>
-  {# Hidden form used by drag-to-create — JS fills in start/end and submits. #}
-  <form id="ribbon-drag-form" method="post" action="/day/{{ date }}/block" hidden>
+  {# Drag-to-create fills these in and submits. Edge-drag posts its own retime
+     request from JS, since the URL depends on which bar was dragged. #}
+  <form id="ribbon-drag-form" method="post" action="/day/{{ date }}/block" hx-post="/day/{{ date }}/block" hidden>
     <input type="hidden" name="start" value="">
     <input type="hidden" name="end" value="">
   </form>
@@ -235,19 +248,50 @@
 <section class="block-section" style="background:transparent;border:0;padding:0">
   <div class="section-head">
     <div class="section-title">Time log
-      <span class="count">{{ blocks|length }} total{% if submitted_count %} &middot; {{ submitted_count }} synced{% endif %}{% if empty_drafts_count %} &middot; {{ empty_drafts_count }} empty{% endif %}</span>
+      <span class="count">{{ blocks|length }} total{% if submitted_count %} &middot; {{ submitted_count }} synced{% endif %}{% if needs_work_count %} &middot; {{ needs_work_count }} need work{% endif %}</span>
     </div>
     <div class="section-actions">
-      <form method="post" action="/day/{{ date }}/discard_all" class="inline-form"
-            onsubmit="return confirm('Discard all {{ draft_count }} draft block{{ '' if draft_count == 1 else 's' }}? Submitted blocks are kept.')">
+      {# hx-confirm, not onsubmit: htmx doesn't check evt.defaultPrevented, so a
+         `return false` from onsubmit would be ignored and the POST would go
+         through anyway. #}
+      <form method="post" action="/day/{{ date }}/discard_all" class="inline-form" hx-post="/day/{{ date }}/discard_all"
+            hx-confirm="Discard all {{ draft_count }} draft block{{ '' if draft_count == 1 else 's' }}? Submitted blocks are kept.">
         <button class="btn btn-sm btn-danger" type="submit" {% if draft_count == 0 %}disabled{% endif %}>Discard all drafts</button>
       </form>
     </div>
   </div>
 
+  {# =====================================================
+     Ready-to-submit strip — one glance at whether the day can be pushed,
+     and a jump straight to the first block that can't.
+     ===================================================== #}
+  {% if draft_count %}
+    <div class="ready-strip">
+      <div class="ready-strip-main">
+        <span class="ready-label">Ready to submit</span>
+        <div class="ready-bar {% if needs_work_count %}warn{% else %}ok{% endif %}">
+          <div class="fill" style="width: {{ ready_pct }}%"></div>
+          <div class="mark" style="left:50%"></div>
+          <div class="mark" style="left:75%"></div>
+        </div>
+        <span class="ready-count">{{ ready_count }}/{{ draft_count }}</span>
+      </div>
+      {% if needs_work_count %}
+        <span class="ready-issue">{{ issue_summary }}</span>
+        <button type="button" class="btn btn-xs" onclick="TL.openBlock({{ first_issue_id }})">Fix now</button>
+      {% else %}
+        <span class="ready-ok">Everything checks out &mdash; safe to submit</span>
+      {% endif %}
+    </div>
+  {% endif %}
+
   {# Bulk-edit form lives outside the cards so checkboxes can reference it via
      the HTML `form` attribute — keeps cards free of nested forms. #}
-  <form id="bulk-ticket-form" method="post" action="/day/{{ date }}/bulk_ticket"></form>
+  <form id="bulk-ticket-form" method="post" action="/day/{{ date }}/bulk_ticket" hx-post="/day/{{ date }}/bulk_ticket"></form>
+  {# Second bulk target: the same checkboxes, pushed to Jira instead of retargeted.
+     JS copies the checked ids across on click, since a checkbox can only belong
+     to one form. #}
+  <form id="bulk-log-form" method="post" action="/day/{{ date }}/bulk_log" hx-post="/day/{{ date }}/bulk_log" hidden></form>
 
   <div class="blocks blocks-v2">
     {# v2: bulk-select-all moved into a tiny header strip above the cards. #}
@@ -285,7 +329,7 @@
             {% endif %}
             <div class="gap-actions">
               {% if sugg and sugg.ticket %}
-                <form method="post" action="/day/{{ date }}/block" class="inline-form">
+                <form method="post" action="/day/{{ date }}/block" class="inline-form" hx-post="/day/{{ date }}/block">
                   <input type="hidden" name="start" value="{{ prev.end_ts | ts_to_hm }}">
                   <input type="hidden" name="end" value="{{ b.start_ts | ts_to_hm }}">
                   <input type="hidden" name="ticket_key" value="{{ sugg.ticket }}">
@@ -293,7 +337,7 @@
                   <button class="btn btn-xs btn-primary" type="submit" title="Accept suggestion — creates a block pre-filled with {{ sugg.ticket }}">Accept</button>
                 </form>
               {% endif %}
-              <form method="post" action="/day/{{ date }}/block" class="inline-form">
+              <form method="post" action="/day/{{ date }}/block" class="inline-form" hx-post="/day/{{ date }}/block">
                 <input type="hidden" name="start" value="{{ prev.end_ts | ts_to_hm }}">
                 <input type="hidden" name="end" value="{{ b.start_ts | ts_to_hm }}">
                 <button class="btn btn-xs" type="submit">Fill gap</button>
@@ -307,9 +351,10 @@
       {% set submitted = b.status == 'submitted' %}
       {# Card carries both .block-card (v2 styling) and .block-row (preserves
          keyboard-nav + bulk-edit hooks from app.js). #}
-      <div id="block-{{ b.id }}" class="block-card block-row {% if submitted %}submitted{% endif %} {% if empty_desc and not submitted %}has-empty{% endif %}"
+      <div id="block-{{ b.id }}" class="block-card block-row {% if submitted %}submitted{% endif %} {% if not b.is_ready and not submitted %}has-empty{% endif %}"
            data-block-id="{{ b.id }}"
-           onclick="document.getElementById('edit-{{ b.id }}').showModal()">
+           data-draft="{{ 0 if submitted else 1 }}"
+           {% if not submitted %}onclick="TL.openBlock({{ b.id }})"{% endif %}>
         <div class="block-card-head">
           <div class="block-select" onclick="event.stopPropagation()">
             {% if not submitted %}
@@ -341,20 +386,35 @@
             {% if b.project_label %}<span class="badge-v2">{{ b.project_label }}</span>{% endif %}
             {% if submitted %}
               <span class="status-pill synced">Synced</span>
-            {% elif empty_desc %}
-              <span class="status-pill empty">Empty</span>
+            {% elif not b.is_ready %}
+              {# One pill for both failure modes — a block missing either half
+                 is equally unsubmittable, and "needs work" says what to do. #}
+              <span class="status-pill needs-work">Needs work</span>
             {% else %}
               <span class="status-pill draft">Draft</span>
             {% endif %}
           </div>
 
           <div class="block-card-actions" onclick="event.stopPropagation()">
-            {% if not submitted %}
-              <button type="button" class="btn btn-xs btn-icon" onclick="document.getElementById('edit-{{ b.id }}').showModal()" title="Edit (E)">&#9998;</button>
-              <form method="post" action="/block/{{ b.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this block?')">
-                <input type="hidden" name="ds" value="{{ date }}">
-                <button class="btn btn-xs btn-icon btn-danger" type="submit" title="Delete">&times;</button>
-              </form>
+            {% if submitted %}
+              <span class="logged-at">logged{% if b.submitted_at %} {{ b.submitted_at | ts_to_hm }}{% endif %}</span>
+            {% else %}
+              <button type="button" class="btn btn-xs btn-icon" onclick="TL.openBlock({{ b.id }})" title="Edit (E)">&#9998;</button>
+              <button type="button" class="btn btn-xs btn-icon" title="Duplicate"
+                      hx-post="/block/{{ b.id }}/duplicate" hx-vals='{"ds": "{{ date }}"}'>&#9099;</button>
+              <button type="button" class="btn btn-xs btn-icon" title="Split in half"
+                      hx-post="/block/{{ b.id }}/split" hx-vals='{"ds": "{{ date }}"}'>&#8646;</button>
+              {% if b.can_merge %}
+                <button type="button" class="btn btn-xs btn-icon" title="Merge with the block below"
+                        hx-post="/block/{{ b.id }}/merge" hx-vals='{"ds": "{{ date }}"}'>&#8693;</button>
+              {% endif %}
+              {% if b.is_ready %}
+                <button type="button" class="btn btn-xs btn-log" title="Log just this block to Jira"
+                        hx-post="/block/{{ b.id }}/log" hx-vals='{"ds": "{{ date }}"}'
+                        hx-confirm="Log {{ b.ticket_key }} ({{ b.minutes }}m) to Jira now?">Log</button>
+              {% endif %}
+              <button type="submit" class="btn btn-xs btn-icon btn-danger" title="Delete"
+                      form="delete-form-{{ b.id }}">&times;</button>
             {% endif %}
           </div>
         </div>
@@ -371,6 +431,8 @@
       {{ ticket_combo('ticket_key', '', form_id='bulk-ticket-form') }}
     </label>
     <button type="submit" class="btn btn-sm btn-primary" form="bulk-ticket-form">Apply to selected</button>
+    <button type="button" class="btn btn-sm" id="bulk-bar-log"
+            title="Push the selected blocks to Jira now">Log selected</button>
     <button type="button" class="btn btn-sm btn-ghost" id="bulk-bar-clear">Clear</button>
   </div>
 </section>
@@ -379,9 +441,9 @@
    Edit modals — step 5 redesign
    ===================================================== #}
 {% for b in blocks %}
-  <dialog id="edit-{{ b.id }}" class="edit-dialog">
+  <dialog id="edit-{{ b.id }}" class="edit-dialog" data-block-id="{{ b.id }}">
     <div class="modal">
-      <form id="edit-form-{{ b.id }}" method="post" action="/block/{{ b.id }}">
+      <form id="edit-form-{{ b.id }}" method="post" action="/block/{{ b.id }}" hx-post="/block/{{ b.id }}">
         <input type="hidden" name="ds" value="{{ date }}">
         <input type="hidden" name="project_label" value="{{ b.project_label or '' }}">
 
@@ -390,12 +452,21 @@
             <h3>Edit block</h3>
             <div class="meta">{{ b.start_ts | ts_to_hm }} – {{ b.end_ts | ts_to_hm }} &middot; {{ b.minutes }}m &middot; {{ b.project_label or 'unassigned' }}</div>
           </div>
-          <button type="button" class="btn btn-ghost btn-sm btn-icon"
-                  onclick="document.getElementById('edit-{{ b.id }}').close()"
-                  aria-label="Close">&times;</button>
+          <div class="modal-head-right">
+            {# Filled in by TL.startReview() while a review session is running. #}
+            <span class="review-pos" hidden></span>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon"
+                    onclick="document.getElementById('edit-{{ b.id }}').close()"
+                    aria-label="Close">&times;</button>
+          </div>
         </div>
 
         <div class="modal-body">
+          <div class="save-in-place">
+            <span class="tag">Saves in place</span>
+            <span>&mdash; the page keeps your scroll position and selection. No reload, no jump to the top.</span>
+          </div>
+
           <div class="row2">
             <div class="field">
               <label class="field-label">Start</label>
@@ -465,22 +536,29 @@
         <div class="modal-foot">
           <div class="left">
             {% if b.status != 'submitted' %}
-              <button type="button" class="btn btn-sm btn-danger"
-                      onclick="if (confirm('Delete this block?')) document.getElementById('delete-form-{{ b.id }}').submit()">Delete</button>
+              {# Submits the sibling delete form below — a button inside the edit
+                 form can't nest another one, and `form=` keeps it working
+                 without JS. #}
+              <button type="submit" class="btn btn-sm btn-danger" form="delete-form-{{ b.id }}">Delete</button>
+              <span class="modal-hint">Deletes are undoable for 8s</span>
             {% endif %}
           </div>
           <div class="right">
-            <span class="modal-hint"><span class="kbd">Esc</span> to cancel &middot; <span class="kbd">&#8984;</span><span class="kbd">&crarr;</span> to save</span>
+            <span class="modal-hint"><span class="kbd">Esc</span> to cancel</span>
             <button type="button" class="btn btn-sm"
                     onclick="document.getElementById('edit-{{ b.id }}').close()">Cancel</button>
-            <button type="submit" class="btn btn-primary btn-sm">Save block</button>
+            <button type="submit" class="btn btn-sm">Save &amp; stay</button>
+            <button type="submit" class="btn btn-primary btn-sm btn-save-next">
+              Save &amp; next
+              <span class="kbd kbd-on-primary">Ctrl&crarr;</span>
+            </button>
           </div>
         </div>
       </form>
     </div>
   </dialog>
   {% if b.status != 'submitted' %}
-    <form id="delete-form-{{ b.id }}" method="post" action="/block/{{ b.id }}/delete" style="display:none">
+    <form id="delete-form-{{ b.id }}" method="post" action="/block/{{ b.id }}/delete" hx-post="/block/{{ b.id }}/delete" hidden>
       <input type="hidden" name="ds" value="{{ date }}">
     </form>
   {% endif %}
@@ -489,7 +567,7 @@
 {# =====================================================
    Add-block form — kept compact
    ===================================================== #}
-<form method="post" action="/day/{{ date }}/block" class="add-block" id="add-block-form">
+<form method="post" action="/day/{{ date }}/block" class="add-block" id="add-block-form" hx-post="/day/{{ date }}/block">
   <h3>Add a block manually</h3>
   <div class="row">
     <label>Start <input type="time" name="start" required></label>
@@ -536,6 +614,10 @@
 <section class="rail-section">
   <h4>Last 28 days</h4>
   <div class="rail-card" style="padding:12px">
+    <div class="heatmap-summary">
+      <span class="n">{{ complete_days }}<span class="of">/{{ tracked_days }}</span></span>
+      <span class="lbl">days fully logged</span>
+    </div>
     <div class="heatmap">
       <div></div>
       {% for dow in ['M','T','W','T','F','S','S'] %}
@@ -554,8 +636,30 @@
         {% endfor %}
       {% endfor %}
     </div>
-    <div class="heatmap-labels"><span>Less</span><span>More</span></div>
+    <div class="heatmap-legend">
+      <span class="leg"><span class="swatch complete"></span>All logged</span>
+      <span class="leg"><span class="swatch partial"></span>Pending</span>
+      <span class="leg"><span class="swatch none"></span>Nothing logged</span>
+    </div>
+    <div class="heatmap-labels"><span>Less time</span><span>More time</span></div>
   </div>
+  {% if pending_days %}
+    {# Days with blocks drafted but not pushed. Without this they only show as a
+       small mark in the grid, which is easy to scroll past for weeks. #}
+    <div class="rail-card pending-days">
+      <div class="pending-days-head">
+        <span class="n">{{ pending_day_count }} day{{ 's' if pending_day_count != 1 else '' }} still pending</span>
+        <span class="b">{{ pending_block_count }} block{{ 's' if pending_block_count != 1 else '' }}</span>
+      </div>
+      <div class="pending-days-chips">
+        {% for p in pending_days %}
+          <a class="pending-chip" href="/day/{{ p.date }}" title="{{ p.date }} — {{ p.pending }} block{{ 's' if p.pending != 1 else '' }} not yet logged">
+            {{ p.label }}<span class="count">{{ p.pending }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
 </section>
 
 <section class="rail-section">
@@ -604,6 +708,9 @@
 <section class="rail-section">
   <h4>Keyboard</h4>
   <div class="rail-card kbd-list">
+    <div class="kbd-row"><span>Review drafts in order</span><span class="keys"><span class="kbd">R</span></span></div>
+    <div class="kbd-row"><span>Save &amp; next draft</span><span class="keys"><span class="kbd">Ctrl</span><span class="kbd">&crarr;</span></span></div>
+    <div class="kbd-row"><span>Undo last change</span><span class="keys"><span class="kbd">Ctrl</span><span class="kbd">Z</span></span></div>
     <div class="kbd-row"><span>Command palette</span><span class="keys"><span class="kbd">Ctrl</span><span class="kbd">K</span></span></div>
     <div class="kbd-row"><span>Submit day</span><span class="keys"><span class="kbd">Ctrl</span><span class="kbd">&crarr;</span></span></div>
     <div class="kbd-row"><span>Next / prev block</span><span class="keys"><span class="kbd">J</span><span class="kbd">K</span></span></div>
@@ -630,31 +737,44 @@
     </div>
     <div class="modal-body">
       <div class="submit-summary">
-        <div><span class="label">Blocks</span><span class="value">{{ draft_count }}</span></div>
-        <div><span class="label">Total time</span><span class="value">{{ draft_total_fmt }}</span></div>
-        <div><span class="label">Issues</span><span class="value">{{ draft_issues }}</span></div>
+        <div><span class="label">Blocks</span><span class="value">{{ ready_count }}</span></div>
+        <div><span class="label">Total time</span><span class="value">{{ ready_time_fmt }}</span></div>
+        <div><span class="label">Issues</span><span class="value {% if needs_work_count %}warn{% endif %}">{{ needs_work_count }}</span></div>
       </div>
-
-      {% if empty_drafts_count %}
-        <div class="flash flash-error">
-          <span class="flash-msg">{{ empty_drafts_count }} block{{ ' is' if empty_drafts_count == 1 else 's are' }} missing a ticket or description. You can still submit — those will be skipped.</span>
-        </div>
-      {% endif %}
 
       {% if draft_count == 0 %}
         <div style="color:var(--muted);font-size:var(--fs-sm);padding:8px 4px">No draft blocks to submit.</div>
       {% else %}
         <div class="submit-list">
           {% for b in draft_blocks %}
-            {% set skip = not b.ticket_key or not (b.description and b.description|trim) %}
-            <div class="submit-item {% if skip %}skip{% endif %}">
-              <span class="submit-marker {% if skip %}warn{% else %}ok{% endif %}">{% if skip %}!{% else %}&#10003;{% endif %}</span>
+            <div class="submit-item {% if not b.is_ready %}skip{% endif %}">
+              <span class="submit-marker {% if b.is_ready %}ok{% else %}warn{% endif %}">{% if b.is_ready %}&#10003;{% else %}!{% endif %}</span>
               <span class="mono">{{ b.start_hm }}&ndash;{{ b.end_hm }}</span>
               <span class="k">{% if b.ticket_key %}{{ b.ticket_key }}{% else %}<span style="color:var(--muted-2)">no ticket</span>{% endif %}</span>
-              <span class="d">{% if b.description and b.description|trim %}{{ b.description }}{% else %}<em style="color:var(--muted-2)">missing description</em>{% endif %}</span>
-              <span class="target">Jira &middot; Sheets</span>
+              <span class="d">
+                {%- if b.is_ready -%}
+                  {{ b.description }}
+                {%- elif not b.ticket_key and not (b.description and b.description|trim) -%}
+                  missing ticket and description
+                {%- elif not b.ticket_key -%}
+                  missing ticket
+                {%- else -%}
+                  missing description
+                {%- endif -%}
+              </span>
+              {% if b.is_ready %}
+                <span class="target">Jira &middot; Sheets</span>
+              {% else %}
+                <button type="button" class="btn btn-xs" onclick="TL.openBlock({{ b.id }})">Fix</button>
+              {% endif %}
             </div>
           {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if needs_work_count %}
+        <div class="submit-warn">
+          {{ issue_summary }}. Those blocks are skipped &mdash; push only the ready ones below.
         </div>
       {% endif %}
     </div>
@@ -666,8 +786,8 @@
         <button type="button" class="btn btn-sm"
                 onclick="document.getElementById('submit-confirm').close()">Cancel</button>
         <form method="post" action="/day/{{ date }}/submit" style="display:inline">
-          <button type="submit" class="btn btn-primary btn-sm" {% if submittable_count == 0 %}disabled{% endif %}>
-            Submit {{ submittable_count }} block{{ '' if submittable_count == 1 else 's' }}
+          <button type="submit" class="btn btn-primary btn-sm" {% if ready_count == 0 %}disabled{% endif %}>
+            Submit {{ ready_count }} block{{ '' if ready_count == 1 else 's' }}
           </button>
         </form>
       </div>

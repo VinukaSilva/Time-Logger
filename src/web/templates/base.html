@@ -10,21 +10,36 @@
     if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
   })();
 </script>
-<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+{# ?v= is a cache-buster: browsers hold on to a favicon far longer than a normal
+   static file, so recolouring logo.svg alone leaves the old orange mark in the
+   tab. Bump this whenever the icon changes. #}
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg?v=2">
+<link rel="alternate icon" href="/static/logo.svg?v=2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body data-draft-min="{{ drafted_minutes }}" data-target-min="{{ target_minutes }}">
-<div class="app app-v2 layout-3col">
+{# Every mutation inside .app shares one swap contract, and htmx inherits these
+   four attributes down the tree — so an element only needs its own hx-post. The
+   server answers with the whole re-rendered day; htmx picks #day-live out of it
+   for the main swap and out-of-band-swaps the topbar counts, ribbon, rail and
+   modals. Nothing navigates, so scroll position, block selection and an
+   in-progress review session all survive a save. Forms with no hx-post (seed,
+   submit, ticket refresh) still do a plain POST — they carry a detailed flash
+   that's worth a full render. #}
+<div class="app app-v2 layout-3col"
+     hx-target="#day-live" hx-swap="outerHTML" hx-select="#day-live"
+     hx-select-oob="#topbar-live,#ribbon-live,#rail-live,#modals-live">
   <header class="topbar topbar-v2">
     <div class="topbar-left">
       <div class="brand brand-v2" aria-label="Time Logger">
         <svg class="brand-mark-v2" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          {# Middle bar uses the "synced" hue, so the mark carries both accents. #}
           <rect x="2"  y="5"  width="20" height="4" rx="1.2" fill="var(--accent)"/>
-          <rect x="2"  y="11" width="13" height="4" rx="1.2" fill="var(--accent)" opacity="0.55"/>
-          <rect x="2"  y="17" width="17" height="4" rx="1.2" fill="var(--accent)" opacity="0.8"/>
+          <rect x="2"  y="11" width="13" height="4" rx="1.2" fill="var(--cool)"/>
+          <rect x="2"  y="17" width="17" height="4" rx="1.2" fill="var(--accent)" opacity="0.55"/>
         </svg>
         <span class="brand-wordmark">Time Logger</span>
         <span class="brand-sep-v2">/</span>
@@ -69,7 +84,9 @@
     </div>
   </header>
 
-  <div class="topbar-row2">
+  {# hx-swap-oob marks this as an out-of-band region: when a mutation response is
+     swapped, htmx finds it by id and replaces it too. Inert on a normal GET. #}
+  <div class="topbar-row2" id="topbar-live" hx-swap-oob="true">
     <nav class="date-nav" aria-label="Date navigation">
       <a class="date-nav-btn" id="nav-prev" href="/day/{{ prev }}" title="Previous day ([)" aria-label="Previous day">&lsaquo;</a>
       <label class="date-label">
@@ -86,8 +103,15 @@
     <span class="topbar-counts">
       <strong>{{ blocks|length }}</strong> block{{ 's' if blocks|length != 1 else '' }}
       {% if submitted_count %}<span class="sep">·</span><strong class="cool">{{ submitted_count }}</strong> synced{% endif %}
-      {% if empty_drafts_count %}<span class="sep">·</span><strong class="warn">{{ empty_drafts_count }}</strong> empty{% endif %}
+      {% if needs_work_count %}<span class="sep">·</span><strong class="warn">{{ needs_work_count }}</strong> need work{% endif %}
     </span>
+    <button type="button" class="btn btn-sm btn-accent-soft" id="row2-review"
+            title="Walk every draft without leaving the keyboard (R)"
+            {% if draft_count == 0 %}disabled{% endif %}
+            onclick="TL.startReview()">
+      Review drafts
+      <span class="kbd">R</span>
+    </button>
     <form method="post" action="/day/{{ date }}/seed" class="inline-form" id="row2-seed-form">
       <button class="btn btn-sm" type="submit" {% if not day.segments or blocks %}disabled{% endif %} title="Auto-seed blocks from detected work (⇧S)">
         <span aria-hidden="true">&#10024;</span> Auto-seed
@@ -102,14 +126,35 @@
 
   {% block ribbon %}{% endblock %}
 
-  <main class="main main-v2">{% block content %}{% endblock %}</main>
+  {# #day-live / #rail-live / #topbar-live / #ribbon-live / #modals-live are the
+     regions app.js swaps in place after a mutation. Keep the ids stable — htmx
+     matches them by id when picking the live parts out of the re-rendered page. #}
+  <main class="main main-v2" id="day-live">
+    {# Mutation feedback for the client: read once per swap, then rendered as a
+       bottom-centre toast (with an Undo button when the action is reversible). #}
+    <script id="toast-data" type="application/json">{{ {
+      'message': toast.get('message', '') if toast else '',
+      'undoable': (toast.get('undoable') and undo_label is not none) if toast else False,
+      'saved_id': toast.get('saved_id') if toast else none,
+      'focus_id': toast.get('focus_id') if toast else none,
+    } | tojson }}</script>
+    {% block content %}{% endblock %}
+  </main>
 
-  <aside class="rail rail-v2">
+  <aside class="rail rail-v2" id="rail-live" hx-swap-oob="true">
     {% block rail %}{% endblock %}
   </aside>
 </div>
 
-{% block modals %}{% endblock %}
+<div id="modals-live" hx-swap-oob="true">{% block modals %}{% endblock %}</div>
+
+{# Undo target for Ctrl+Z and the toast's Undo button. Lives outside every live
+   region so it survives the swap it triggers. Attributes mirror day.html's
+   live() macro, which isn't reachable from the parent template. #}
+<form id="undo-form" method="post" action="/day/{{ date }}/undo" hidden
+      hx-post="/day/{{ date }}/undo"
+      hx-target="#day-live" hx-swap="outerHTML" hx-select="#day-live"
+      hx-select-oob="#topbar-live,#ribbon-live,#rail-live,#modals-live"></form>
 
 <dialog id="cmdk-modal" class="cmdk-dialog" aria-label="Command palette">
   <div class="cmdk">

@@ -237,7 +237,12 @@ def _sync_status(target: date) -> dict:
     }
 
 
-def _day_context(request: Request, ds: str, flash: dict | None = None) -> dict:
+def _day_context(
+    request: Request,
+    ds: str,
+    flash: dict | None = None,
+    toast: dict | None = None,
+) -> dict:
     _maybe_refresh_jira_async()
     target = _parse_date(ds)
     day = build_day(target)
@@ -271,9 +276,29 @@ def _day_context(request: Request, ds: str, flash: dict | None = None) -> dict:
 
     draft_blocks = [b for b in blocks if b["status"] == "draft"]
     draft_total = sum(b["minutes"] for b in draft_blocks)
-    draft_issues = len({b["ticket_key"] for b in draft_blocks if b["ticket_key"]})
-    empty_drafts = [b for b in draft_blocks if not (b["ticket_key"] and (b["description"] or "").strip())]
-    submittable = [b for b in draft_blocks if b["ticket_key"] and (b["description"] or "").strip()]
+    empty_drafts = [b for b in draft_blocks if not blocks_service.is_ready(b)]
+    submittable = [b for b in draft_blocks if blocks_service.is_ready(b)]
+
+    # "Ready to submit" strip: how far through the day's drafts the user is, and
+    # the first block that still needs attention so "Fix now" has a destination.
+    ready_pct = round(len(submittable) / len(draft_blocks) * 100) if draft_blocks else 0
+    ready_time = sum(b["minutes"] for b in submittable)
+    if len(empty_drafts) == 1:
+        issue_summary = "1 block needs a ticket or description"
+    else:
+        issue_summary = f"{len(empty_drafts)} blocks need a ticket or description"
+    first_issue_id = empty_drafts[0]["id"] if empty_drafts else None
+
+    for b in blocks:
+        b["is_ready"] = blocks_service.is_ready(b)
+
+    # Merge is offered only when a later draft exists to fold in.
+    draft_starts = sorted(b["start_ts"] for b in draft_blocks)
+    for b in blocks:
+        b["can_merge"] = (
+            b["status"] == "draft"
+            and any(s > b["start_ts"] for s in draft_starts)
+        )
 
     block_context_segments: dict[int, list[dict]] = {}
     for b in blocks:
@@ -313,6 +338,7 @@ def _day_context(request: Request, ds: str, flash: dict | None = None) -> dict:
         if not pos:
             continue
         ribbon_drafts.append({
+            "id": b["id"],
             "status": b["status"],
             "left_pct": pos["left_pct"],
             "width_pct": pos["width_pct"],
@@ -367,6 +393,27 @@ def _day_context(request: Request, ds: str, flash: dict | None = None) -> dict:
     heatmap = _heatmap(target)
     sync = _sync_status(target)
 
+    # Days in the last 28 with blocks logged but not all pushed — surfaced as
+    # clickable chips under the heatmap so stale drafts don't rot unnoticed.
+    pending_days = []
+    for row in heatmap:
+        for cell in row:
+            if cell.get("submit_state") != "partial" or cell["date"] == ds:
+                continue
+            d = _parse_date(cell["date"])
+            pending_days.append({
+                "date": cell["date"],
+                "label": f"{d.strftime('%b')} {d.day}",
+                "pending": cell["pending"],
+            })
+    complete_days = sum(
+        1 for row in heatmap for cell in row if cell.get("submit_state") == "complete"
+    )
+    tracked_days = sum(
+        1 for row in heatmap for cell in row
+        if cell.get("submit_state") in ("complete", "partial")
+    )
+
     # v2: 7-day drafted-minutes series ending on `target` for the hero sparkline.
     # Derived from the existing heatmap; no new query.
     flat = [cell for row in heatmap for cell in row if not cell.get("is_future")]
@@ -420,6 +467,7 @@ def _day_context(request: Request, ds: str, flash: dict | None = None) -> dict:
         "tickets": tickets,
         "drafted_minutes": drafted_minutes,
         "flash": flash,
+        "toast": toast,
 
         "dow_short": dow_short,
         "formatted_date": formatted_date,
@@ -458,9 +506,6 @@ def _day_context(request: Request, ds: str, flash: dict | None = None) -> dict:
         "draft_blocks": draft_blocks,
         "draft_count": len(draft_blocks),
         "draft_total_fmt": _fmt_dur(draft_total),
-        "draft_issues": draft_issues,
-        "empty_drafts_count": len(empty_drafts),
-        "submittable_count": len(submittable),
 
         # v2 additions (consumed by the redesigned topbar / hero stat)
         "submitted_count": submitted_count,
@@ -473,7 +518,44 @@ def _day_context(request: Request, ds: str, flash: dict | None = None) -> dict:
         "spark_dot_x": spark_dot_xy[0],
         "spark_dot_y": spark_dot_xy[1],
         "gap_suggestions": gap_suggestions,
+
+        # Day-review UX pass: ready-to-submit strip, pending-day chips, undo state
+        "ready_count": len(submittable),
+        "ready_pct": ready_pct,
+        "ready_time_fmt": _fmt_dur(ready_time),
+        "needs_work_count": len(empty_drafts),
+        "issue_summary": issue_summary,
+        "first_issue_id": first_issue_id,
+        "all_ready": not empty_drafts and bool(draft_blocks),
+        "pending_days": pending_days,
+        "pending_day_count": len(pending_days),
+        "pending_block_count": sum(p["pending"] for p in pending_days),
+        "complete_days": complete_days,
+        "tracked_days": tracked_days,
+        "undo_label": blocks_service.peek_undo(ds),
     }
+
+
+def _respond(
+    request: Request,
+    ds: str,
+    *,
+    flash: dict | None = None,
+    toast: dict | None = None,
+    anchor: str | None = None,
+):
+    """Answer a mutation.
+
+    htmx requests get the re-rendered day page — the client picks the live regions
+    out of it and swaps them in place, so the scroll position, the selected block
+    and any open review session all survive the save. A plain form post (no JS)
+    still gets the old redirect, which keeps every action usable without htmx.
+    """
+    if request.headers.get("hx-request") == "true":
+        return templates.TemplateResponse(
+            request, "day.html", _day_context(request, ds, flash=flash, toast=toast)
+        )
+    return RedirectResponse(f"/day/{ds}" + (f"#{anchor}" if anchor else ""), status_code=303)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -495,6 +577,7 @@ def metrics_last28(anchor: str | None = None) -> JSONResponse:
 @router.post("/day/{ds}/seed", response_class=HTMLResponse)
 def seed(request: Request, ds: str) -> HTMLResponse:
     day = build_day(_parse_date(ds))
+    blocks_service.push_undo(ds, "Auto-seed")
     result = blocks_service.seed_from_work_segments(ds, day.segments)
     created = result["created"]
     attempted = result["attempted"]
@@ -503,6 +586,7 @@ def seed(request: Request, ds: str) -> HTMLResponse:
     errors = result.get("errors") or []
 
     if created == 0:
+        blocks_service.pop_undo(ds)
         flash = {"level": "error", "message": "Nothing to seed — either no detected work, or blocks already exist for this day."}
         return templates.TemplateResponse(request, "day.html", _day_context(request, ds, flash=flash))
 
@@ -544,8 +628,16 @@ def add_block(
     end_ts = _hm_to_ts(ds, end)
     if end_ts <= start_ts:
         return HTMLResponse("<p class='error'>End time must be after start.</p>", status_code=400)
-    blocks_service.create(ds, start_ts, end_ts, project_label or None, ticket_key or None, description)
-    return RedirectResponse(f"/day/{ds}", status_code=303)
+    blocks_service.push_undo(ds, "Add block")
+    new_id = blocks_service.create(
+        ds, start_ts, end_ts, project_label or None, ticket_key or None, description
+    )
+    label = f"Created {ticket_key}" if ticket_key else "Created an empty block"
+    return _respond(
+        request, ds,
+        toast={"message": f"{label} for {start}–{end}", "undoable": True, "focus_id": new_id},
+        anchor=f"block-{new_id}",
+    )
 
 
 @router.post("/block/{block_id}", response_class=HTMLResponse)
@@ -563,6 +655,7 @@ def update_block(
     end_ts = _hm_to_ts(ds, end)
     if end_ts <= start_ts:
         return HTMLResponse("<p class='error'>End time must be after start.</p>", status_code=400)
+    blocks_service.push_undo(ds, "Edit")
     blocks_service.update(
         block_id,
         start_ts=start_ts,
@@ -571,19 +664,143 @@ def update_block(
         description=description,
         project_label=project_label or None,
     )
-    return RedirectResponse(f"/day/{ds}#block-{block_id}", status_code=303)
+    return _respond(
+        request, ds,
+        toast={
+            "message": f"Saved {ticket_key or 'block'}",
+            "undoable": True,
+            "saved_id": block_id,
+        },
+        anchor=f"block-{block_id}",
+    )
+
+
+@router.post("/block/{block_id}/retime", response_class=HTMLResponse)
+def retime_block(
+    request: Request,
+    block_id: int,
+    ds: str = Form(...),
+    start: str = Form(...),
+    end: str = Form(...),
+) -> HTMLResponse:
+    """Nudge a block's boundaries — used by the ribbon's edge drag."""
+    start_ts = _hm_to_ts(ds, start)
+    end_ts = _hm_to_ts(ds, end)
+    if end_ts <= start_ts:
+        return HTMLResponse("<p class='error'>End time must be after start.</p>", status_code=400)
+    blocks_service.push_undo(ds, "Resize")
+    blocks_service.retime(block_id, start_ts, end_ts)
+    return _respond(
+        request, ds,
+        toast={"message": f"Adjusted to {start} → {end}", "undoable": True, "saved_id": block_id},
+        anchor=f"block-{block_id}",
+    )
 
 
 @router.post("/block/{block_id}/delete", response_class=HTMLResponse)
-def delete_block(block_id: int, ds: str = Form(...)) -> RedirectResponse:
+def delete_block(request: Request, block_id: int, ds: str = Form(...)):
+    block = blocks_service.get(block_id)
+    blocks_service.push_undo(ds, "Delete")
     blocks_service.delete(block_id)
-    return RedirectResponse(f"/day/{ds}", status_code=303)
+    label = (block or {}).get("ticket_key") or "Block"
+    return _respond(request, ds, toast={"message": f"{label} deleted", "undoable": True})
+
+
+@router.post("/block/{block_id}/duplicate", response_class=HTMLResponse)
+def duplicate_block(request: Request, block_id: int, ds: str = Form(...)):
+    block = blocks_service.get(block_id)
+    blocks_service.push_undo(ds, "Duplicate")
+    new_id = blocks_service.duplicate(block_id)
+    if new_id is None:
+        return _respond(request, ds, toast={"message": "Nothing to duplicate", "undoable": False})
+    label = (block or {}).get("ticket_key") or "block"
+    return _respond(
+        request, ds,
+        toast={
+            "message": f"Duplicated {label} — adjust its times",
+            "undoable": True,
+            "focus_id": new_id,
+        },
+        anchor=f"block-{new_id}",
+    )
+
+
+@router.post("/block/{block_id}/split", response_class=HTMLResponse)
+def split_block(request: Request, block_id: int, ds: str = Form(...)):
+    blocks_service.push_undo(ds, "Split")
+    at = blocks_service.split(block_id)
+    if at is None:
+        blocks_service.pop_undo(ds)
+        return _respond(
+            request, ds,
+            toast={"message": "Too short to split — needs at least 10 minutes", "undoable": False},
+        )
+    return _respond(
+        request, ds,
+        toast={"message": f"Split into two blocks at {at}", "undoable": True},
+        anchor=f"block-{block_id}",
+    )
+
+
+@router.post("/block/{block_id}/merge", response_class=HTMLResponse)
+def merge_block(request: Request, block_id: int, ds: str = Form(...)):
+    blocks_service.push_undo(ds, "Merge")
+    merged = blocks_service.merge_with_next(block_id)
+    if merged is None:
+        blocks_service.pop_undo(ds)
+        return _respond(
+            request, ds,
+            toast={"message": "No draft block below to merge with", "undoable": False},
+        )
+    return _respond(
+        request, ds,
+        toast={"message": f"Merged into {merged[0]} → {merged[1]}", "undoable": True},
+        anchor=f"block-{block_id}",
+    )
+
+
+@router.post("/block/{block_id}/log", response_class=HTMLResponse)
+def log_block(request: Request, block_id: int, ds: str = Form(...)):
+    """Push a single block to Jira without submitting the rest of the day."""
+    block = blocks_service.get(block_id)
+    if not block or not blocks_service.is_ready(block):
+        return _respond(
+            request, ds,
+            toast={
+                "message": "Needs a ticket and a description before it can be logged",
+                "undoable": False,
+            },
+        )
+    result = submit_service.submit_day(ds, block_ids=[block_id])
+    # A Jira worklog can't be rolled back from here, so drop the undo history
+    # rather than offer an undo that would desync the DB from Jira.
+    blocks_service.clear_undo(ds)
+    if result["submitted"]:
+        toast = {"message": f"{block['ticket_key']} logged to Jira", "undoable": False}
+        return _respond(request, ds, toast=toast, anchor=f"block-{block_id}")
+    msg = result["errors"][0] if result["errors"] else "Log failed"
+    return _respond(request, ds, flash={"level": "error", "message": msg})
+
+
+@router.post("/day/{ds}/undo", response_class=HTMLResponse)
+def undo(request: Request, ds: str):
+    label = blocks_service.pop_undo(ds)
+    if label is None:
+        return _respond(request, ds, toast={"message": "Nothing to undo", "undoable": False})
+    return _respond(request, ds, toast={"message": f"{label} undone", "undoable": False})
 
 
 @router.post("/day/{ds}/discard_all", response_class=HTMLResponse)
-def discard_all(ds: str) -> RedirectResponse:
-    blocks_service.delete_all_drafts(ds)
-    return RedirectResponse(f"/day/{ds}", status_code=303)
+def discard_all(request: Request, ds: str):
+    blocks_service.push_undo(ds, "Discard all")
+    n = blocks_service.delete_all_drafts(ds)
+    if not n:
+        blocks_service.pop_undo(ds)
+        return _respond(request, ds, toast={"message": "No drafts to discard", "undoable": False})
+    return _respond(
+        request, ds,
+        toast={"message": f"{n} draft{'s' if n != 1 else ''} discarded", "undoable": True},
+    )
 
 
 @router.post("/tickets/refresh", response_class=HTMLResponse)
@@ -608,17 +825,41 @@ def bulk_set_ticket(
     """Apply one ticket key to multiple draft blocks in a single click."""
     key = ticket_key.strip() or None
     if not block_ids:
-        flash = {"level": "error", "message": "No blocks selected."}
-    else:
-        n = blocks_service.bulk_set_ticket(block_ids, key)
-        label = key or "— none —"
-        flash = {"level": "ok", "message": f"Ticket set to {label} on {n} block{'s' if n != 1 else ''}."}
-    return templates.TemplateResponse(request, "day.html", _day_context(request, ds, flash=flash))
+        return _respond(request, ds, toast={"message": "No blocks selected", "undoable": False})
+    blocks_service.push_undo(ds, "Bulk ticket")
+    n = blocks_service.bulk_set_ticket(block_ids, key)
+    label = key or "— none —"
+    return _respond(
+        request, ds,
+        toast={"message": f"{label} applied to {n} block{'s' if n != 1 else ''}", "undoable": True},
+    )
+
+
+@router.post("/day/{ds}/bulk_log", response_class=HTMLResponse)
+def bulk_log(
+    request: Request,
+    ds: str,
+    block_ids: list[int] = Form(default=[]),
+) -> HTMLResponse:
+    """Push just the selected blocks to Jira."""
+    if not block_ids:
+        return _respond(request, ds, toast={"message": "No blocks selected", "undoable": False})
+    result = submit_service.submit_day(ds, block_ids=block_ids)
+    blocks_service.clear_undo(ds)
+    if not result["submitted"]:
+        msg = result["errors"][0] if result["errors"] else "None of the selected blocks are ready yet"
+        return _respond(request, ds, toast={"message": msg, "undoable": False})
+    n = result["submitted"]
+    return _respond(
+        request, ds,
+        toast={"message": f"{n} block{'s' if n != 1 else ''} logged", "undoable": False},
+    )
 
 
 @router.post("/day/{ds}/submit", response_class=HTMLResponse)
 def submit(request: Request, ds: str) -> HTMLResponse:
     result = submit_service.submit_day(ds)
+    blocks_service.clear_undo(ds)
     level = "error" if result["failed"] or (result["skipped"] and not result["submitted"]) else "ok"
     msg_lines = [f"Submitted: {result['submitted']}   Failed: {result['failed']}   Skipped: {result['skipped']}"]
     msg_lines.extend(result["errors"])

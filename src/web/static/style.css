@@ -3,52 +3,105 @@
    ============================================================ */
 
 :root {
-  /* --- TWO-ACCENT SYSTEM (v2) ---
-     warm = action / draft / "yours"
-     cool = synced / confirmed / "system" */
-  --acc-h: 35;
-  --accent:        oklch(0.72 0.17 var(--acc-h));
-  --accent-strong: oklch(0.66 0.19 var(--acc-h));
-  --accent-soft:   oklch(0.72 0.17 var(--acc-h) / 0.18);
-  --accent-ghost:  oklch(0.72 0.17 var(--acc-h) / 0.08);
-  --accent-fg:     #1a1407;
+  /* --- TWO-ACCENT SYSTEM ---
+     accent = action / draft / "yours"
+     cool   = synced / confirmed / "system"
 
-  --cool-h: 196;
-  --cool:        oklch(0.72 0.12 var(--cool-h));
-  --cool-strong: oklch(0.66 0.14 var(--cool-h));
-  --cool-soft:   oklch(0.72 0.12 var(--cool-h) / 0.18);
-  --cool-ghost:  oklch(0.72 0.12 var(--cool-h) / 0.08);
+     Palette: "Gemini Dark" (dark) + "Gemini Light" (light) from the theme
+     handoff. Unlike the old warm palette, the accent changes *lightness* between
+     modes — a light blue on near-black, a deep blue on cool paper — so accent and
+     status colours are defined per theme rather than once in :root.
+
+     Each colour also gets an `-rgb` triplet so alpha ramps (heatmap levels, hatch
+     fills, soft borders) can be written `rgb(var(--accent-rgb) / 0.42)` and follow
+     the theme automatically. Keep the triplet in sync with its hex above it. */
+
+  /* --- dark theme (default) — "Vivid" ---
+     The handoff's Gemini Dark passed every text-contrast check and still read
+     flat, because what was failing was structure, not text:
+       · hairlines at 1.30:1 against their own card — below ~1.6:1 an edge stops
+         registering, so every card dissolved into the page;
+       · cards only 2.08x the page luminance, the whole surface ladder squeezed
+         into a narrow band with no room underneath;
+       · accent 1.34:1 against body text — a ticket key was no more present than
+         the sentence beside it, so nothing could pop.
+     This deepens the ground for separation (card lift 3.71x), raises hairlines to
+     16% white (1.65:1), and splits the accent by role. Accent-vs-text is now
+     2.38:1. Every pairing still clears AA. */
+
+  /* The accent splits in two because one value can't do both jobs: a blue light
+     enough to read as text on near-black is too pale to carry white text, and a
+     blue dark enough for white text is too dark to read as text. So --accent is
+     the text/stroke tone (ticket keys, rings, ribbon bars) and --accent-fill is
+     the solid primary action. */
+  --accent:        #6AA1FF;
+  --accent-rgb:    106 161 255;
+  --accent-strong: #8FB6FF;   /* brighter accent tone for emphasis text */
+  --accent-soft:   rgb(var(--accent-rgb) / 0.16);
+  --accent-ghost:  rgb(var(--accent-rgb) / 0.10);
+  --accent-fill:   #2F6FED;
+  /* Hover goes *darker*, not brighter: brightening a saturated fill drops the
+     white label to 3.91:1. Darkening keeps it at 5.38:1. */
+  --accent-fill-hover: #2A63DB;
+  --accent-fg:     #FFFFFF;   /* label on a solid accent fill */
+  --accent-glow:   0 4px 16px -4px rgb(var(--accent-rgb) / 0.45);
+
+  --cool:        #B794FF;
+  --cool-rgb:    183 148 255;
+  --cool-strong: #CDB4FE;
+  --cool-soft:   rgb(var(--cool-rgb) / 0.16);
+  --cool-ghost:  rgb(var(--cool-rgb) / 0.10);
 
   /* hero glow used by the v2 stat-hero card */
-  --hero-glow: radial-gradient(120% 80% at 0% 0%, oklch(0.72 0.17 var(--acc-h) / 0.16), transparent 70%);
+  --hero-glow: radial-gradient(120% 80% at 0% 0%, rgb(var(--accent-rgb) / 0.16), transparent 70%);
 
   /* --- status --- */
-  --ok:     oklch(0.74 0.13 155);
-  --ok-soft:oklch(0.74 0.13 155 / 0.14);
-  --warn:   oklch(0.78 0.14 75);
-  --warn-soft:oklch(0.78 0.14 75 / 0.14);
-  --danger: oklch(0.67 0.17 25);
-  --danger-soft:oklch(0.67 0.17 25 / 0.14);
-  --info:   oklch(0.72 0.1 230);
+  --ok:        #45D483;
+  --ok-rgb:    69 212 131;
+  --ok-soft:   rgb(var(--ok-rgb) / 0.16);
+  --ok-fg:     #06251A;
+  --warn:      #FBBF24;
+  --warn-rgb:  251 191 36;
+  --warn-soft: rgb(var(--warn-rgb) / 0.16);
+  --warn-fg:   #241B00;
+  /* Amber label on an amber wash. In dark mode --warn already clears AA against
+     its own soft fill, so this is just --warn; the light theme needs a darker ink
+     because amber-on-amber there lands at 3.8:1. */
+  --warn-ink:  #FBBF24;
+  --danger:      #FB7185;
+  --danger-rgb:  251 113 133;
+  --danger-soft: rgb(var(--danger-rgb) / 0.14);
+  --info:     #6AA1FF;
+  --info-rgb: 106 161 255;
 
-  /* --- dark theme (default) --- */
-  --bg:       #0a0b0d;
-  --bg-2:     #0f1114;
-  --panel:    #14171c;
-  --panel-2:  #191d23;
-  --panel-3:  #20252d;
-  --hover:    rgba(255,255,255,0.035);
-  --hover-2:  rgba(255,255,255,0.06);
-  --border:   rgba(255,255,255,0.07);
-  --border-2: rgba(255,255,255,0.11);
-  --border-3: rgba(255,255,255,0.18);
-  --text:     #e8ebef;
-  --text-2:   #b5bcc6;
-  --muted:    #7a8390;
-  --muted-2:  #565e69;
-  --shadow-lg: 0 20px 50px -20px rgba(0,0,0,0.6), 0 8px 18px -10px rgba(0,0,0,0.55);
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
-  --overlay:  rgba(6,7,9,0.72);
+  /* --- surfaces ---
+     Cool-tinted rather than neutral grey, and deeper at the bottom so panels
+     have something to sit on. */
+  --bg:       #08090C;
+  --bg-2:     #0E1014;
+  --panel:    #161A20;
+  --panel-2:  #1E232B;
+  --panel-3:  #272D36;
+  --hover:    rgba(255,255,255,0.05);
+  --hover-2:  rgba(255,255,255,0.08);
+  --border:   rgba(255,255,255,0.16);
+  --border-2: rgba(255,255,255,0.25);
+  --border-3: rgba(255,255,255,0.34);
+  --text:     #F4F6FA;
+  --text-2:   #CAD2DE;
+  --muted:    #8F98A6;
+  --muted-2:  #6A7381;
+  /* Keyboard-chip fill. On dark surfaces this has to be a *white* wash — a black
+     one punches the chip into a hole and, over the accent fills, dulls the accent
+     to grey. Chips sitting directly on an accent fill are the one exception and
+     keep a black wash (see .kbd-on-primary). */
+  --kbd-bg:   rgba(255,255,255,0.06);
+  /* 1px inner top highlight on raised surfaces — what makes an edge read as lit
+     rather than merely drawn. The flat theme had no equivalent. */
+  --lip:      rgba(255,255,255,0.06);
+  --shadow-lg: 0 24px 56px -22px rgba(0,0,0,0.75), 0 8px 20px -10px rgba(0,0,0,0.6);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.5);
+  --overlay:  rgba(0,0,0,0.7);
 
   /* --- type --- */
   --font-ui: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -78,28 +131,74 @@
   color-scheme: dark;
 }
 
+/* --- light theme — 1a Gemini Light ---
+   Cool grey paper rather than white: #F0F4F9 is the page, white is the raised
+   card. The soft/ghost accent tints are Google's "primary container" solids, not
+   alpha washes of the accent — an alpha of #0B57D0 goes grey-blue and muddy on
+   paper, where #D3E3FD stays clean. */
 [data-theme="light"] {
-  --bg:       #f8f7f4;
-  --bg-2:     #ffffff;
-  --panel:    #ffffff;
-  --panel-2:  #f4f2ee;
-  --panel-3:  #ebe8e1;
-  --hover:    rgba(0,0,0,0.03);
-  --hover-2:  rgba(0,0,0,0.055);
-  --border:   rgba(24,20,10,0.08);
-  --border-2: rgba(24,20,10,0.14);
-  --border-3: rgba(24,20,10,0.26);
-  --text:     #17181b;
-  --text-2:   #3c424c;
-  --muted:    #6b7280;
-  --muted-2:  #9aa1ac;
-  --shadow-lg: 0 18px 40px -22px rgba(30,25,15,0.3), 0 4px 12px -6px rgba(30,25,15,0.1);
-  --shadow-sm: 0 1px 2px rgba(30,25,15,0.05);
-  --overlay:  rgba(30,25,15,0.35);
-  --accent-fg: #ffffff;
+  --accent:        #0B57D0;
+  --accent-rgb:    11 87 208;
+  --accent-strong: #0842A0;   /* dark-on-light accents deepen on hover */
+  --accent-soft:   #D3E3FD;
+  --accent-ghost:  rgb(var(--accent-rgb) / 0.08);
+  /* Light mode needs no accent split — #0B57D0 is dark enough to carry white text
+     and to read as text on paper, so fill and text tone are the same value. The
+     tokens exist here so components can reference them unconditionally. */
+  --accent-fill:   #0B57D0;
+  --accent-fill-hover: #0842A0;
+  --accent-fg:     #FFFFFF;
+  /* A zero-size transparent shadow, not `none`: this sits inside a box-shadow
+     list, and `none` in a list is invalid CSS and would drop the whole rule. */
+  --accent-glow:   0 0 0 0 rgba(0,0,0,0);
+  --lip:           transparent;
 
-  /* v2 hero glow — softer in light theme */
-  --hero-glow: radial-gradient(120% 80% at 0% 0%, oklch(0.72 0.17 var(--acc-h) / 0.12), transparent 70%);
+  /* Two shades deviate from the handoff by one step, both because this app uses
+     them as *text* where the mock only used them as fills. The handoff's #7B4FD8
+     violet gives 4.12:1 for the Synced pill label and its #1E8E3E green gives
+     4.21:1 for the vs-detected figure — both under the 4.5 AA floor for text this
+     size. These are the lightest same-hue shades that clear it. */
+  --cool:        #6E3FD0;   /* handoff: #7B4FD8 */
+  --cool-rgb:    110 63 208;
+  --cool-strong: #5B2AC4;
+  --cool-soft:   #EADDFF;
+  --cool-ghost:  rgb(var(--cool-rgb) / 0.10);
+
+  --ok:        #137333;     /* handoff: #1E8E3E */
+  --ok-rgb:    19 115 51;
+  --ok-soft:   rgb(var(--ok-rgb) / 0.14);
+  --ok-fg:     #FFFFFF;
+  --warn:      #B06000;
+  --warn-rgb:  176 96 0;
+  --warn-soft: rgb(var(--warn-rgb) / 0.14);
+  --warn-fg:   #FFFFFF;
+  --warn-ink:  #7A4200;
+  --danger:      #C5221F;
+  --danger-rgb:  197 34 31;
+  --danger-soft: rgb(var(--danger-rgb) / 0.12);
+  --info:     #0B57D0;
+  --info-rgb: 11 87 208;
+
+  --bg:       #F0F4F9;
+  --bg-2:     #FFFFFF;
+  --panel:    #FFFFFF;
+  --panel-2:  #E9EEF6;
+  --panel-3:  #DDE3EA;
+  --hover:    rgba(0,0,0,0.035);
+  --hover-2:  rgba(0,0,0,0.06);
+  --border:   #DDE3EA;
+  --border-2: #C7CDD6;
+  --border-3: #A8AEB8;
+  --text:     #1F1F1F;
+  --text-2:   #444746;
+  --muted:    #5F6368;
+  --muted-2:  #80868B;
+  --kbd-bg:   rgba(0,0,0,0.05);
+  --shadow-lg: 0 18px 40px -22px rgba(60,64,67,0.32), 0 4px 12px -6px rgba(60,64,67,0.12);
+  --shadow-sm: 0 1px 2px rgba(60,64,67,0.08);
+  --overlay:  rgba(32,33,36,0.45);
+
+  --hero-glow: radial-gradient(120% 80% at 0% 0%, rgb(var(--accent-rgb) / 0.10), transparent 70%);
 
   color-scheme: light;
 }
@@ -412,7 +511,11 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
 .block-row.selected::before {
   content:""; position: absolute; left:0; top:0; bottom:0; width: 2px; background: var(--accent);
 }
-.block-row.submitted { opacity: 0.7; }
+/* NB: no opacity on submitted rows. Cards carry both .block-card and .block-row,
+   so a 0.7 here faded the whole synced card — text, ticket key, pills — toward the
+   page colour, which read as a grey veil over the palette in dark mode and as
+   washed-out grey body text in light. "Synced" is already carried by the recessed
+   --bg-2 surface, the cool border, the cool ticket key and the SYNCED pill. */
 
 .block-status-dot {
   width: 8px; height: 8px; border-radius: 50%;
@@ -505,9 +608,12 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
   white-space: nowrap;
   border: 1px solid transparent;
 }
-.pill-new          { background: oklch(0.78 0.13 235 / 0.16); color: oklch(0.82 0.13 235); border-color: oklch(0.78 0.13 235 / 0.35); }
-.pill-indeterminate{ background: oklch(0.82 0.16 80 / 0.16);  color: oklch(0.86 0.16 80);  border-color: oklch(0.82 0.16 80 / 0.35);  }
-.pill-done         { background: oklch(0.70 0.12 155 / 0.16); color: oklch(0.78 0.12 155); border-color: oklch(0.70 0.12 155 / 0.35); }
+/* Jira status categories ride the theme's status tokens, so the text stays
+   readable in both modes (the old fixed light-blue/amber was near-invisible on
+   the light paper surface). */
+.pill-new          { background: rgb(var(--info-rgb) / 0.16); color: var(--info); border-color: rgb(var(--info-rgb) / 0.35); }
+.pill-indeterminate{ background: rgb(var(--warn-rgb) / 0.16); color: var(--warn-ink); border-color: rgb(var(--warn-rgb) / 0.35); }
+.pill-done         { background: rgb(var(--ok-rgb) / 0.16);   color: var(--ok);   border-color: rgb(var(--ok-rgb) / 0.35); }
 .pill-unknown      { background: var(--hover); color: var(--muted); border-color: var(--border-2); }
 
 /* ----- Tickets browser modal ----- */
@@ -722,12 +828,12 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
 .btn:active { transform: translateY(0.5px); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-primary {
-  background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 1px 0 rgba(0,0,0,0.1);
+  background: var(--accent-fill); color: var(--accent-fg); border-color: var(--accent-fill);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 1px 0 rgba(0,0,0,0.1), var(--accent-glow);
   font-weight: 600;
 }
-.btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
-.btn-submit { background: var(--ok); color: #0b1612; border-color: var(--ok); font-weight: 600; }
+.btn-primary:hover { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); }
+.btn-submit { background: var(--ok); color: var(--ok-fg); border-color: var(--ok); font-weight: 600; }
 .btn-submit:hover { filter: brightness(1.08); }
 .btn-submit:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-ghost { background: transparent; border-color: transparent; }
@@ -737,20 +843,20 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
 .btn-icon { width: 28px; padding: 0; justify-content: center; }
 .btn-icon.btn-sm { width: 24px; }
 .btn-icon.btn-xs { width: 20px; }
-.btn-danger { color: var(--danger); border-color: rgba(224, 100, 100, 0.35); }
+.btn-danger { color: var(--danger); border-color: rgb(var(--danger-rgb) / 0.35); }
 .btn-danger:hover { border-color: var(--danger); background: var(--danger-soft); }
 
 .kbd {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 4px;
-  background: var(--panel-2); border: 1px solid var(--border);
+  background: var(--kbd-bg); border: 1px solid var(--border);
   border-bottom-width: 2px;
   border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 10px; font-weight: 500;
   color: var(--muted); line-height: 1;
 }
-.btn .kbd { margin-left: 2px; border-color: var(--border-2); background: rgba(0,0,0,0.15); }
+.btn .kbd { margin-left: 2px; border-color: var(--border-2); background: var(--kbd-bg); }
 
 /* ============================================================
    Edit modal (step 5 redesign)
@@ -1039,6 +1145,7 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
 .rail-card {
   background: var(--panel);
   border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 var(--lip);
   border-radius: var(--r-md);
   padding: 12px 14px;
 }
@@ -1071,9 +1178,9 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
   transition: outline 0.1s var(--ease);
   outline: 0 solid transparent;
 }
-.heatmap-cell.l1 { background: oklch(0.72 0.17 var(--acc-h) / 0.22); }
-.heatmap-cell.l2 { background: oklch(0.72 0.17 var(--acc-h) / 0.42); }
-.heatmap-cell.l3 { background: oklch(0.72 0.17 var(--acc-h) / 0.65); }
+.heatmap-cell.l1 { background: rgb(var(--accent-rgb) / 0.22); }
+.heatmap-cell.l2 { background: rgb(var(--accent-rgb) / 0.42); }
+.heatmap-cell.l3 { background: rgb(var(--accent-rgb) / 0.65); }
 .heatmap-cell.l4 { background: var(--accent); }
 .heatmap-cell.empty { background: transparent; cursor: default; }
 .heatmap-cell.today { outline: 1.5px solid var(--text); outline-offset: 1px; }
@@ -1093,7 +1200,7 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
 .heatmap-cell .heatmap-mark.partial { color: var(--warn); }
 /* Partially-logged days get an amber tint. Fully-logged and seeded-only days
    keep the normal orange activity shading — only the tick + border change. */
-.heatmap-cell.partial { background: oklch(0.78 0.14 75 / 0.30); }
+.heatmap-cell.partial { background: rgb(var(--warn-rgb) / 0.30); }
 /* Ring around the cell: green when fully logged, amber when blocks pending. */
 .heatmap-cell.complete::after,
 .heatmap-cell.partial::after {
@@ -1224,7 +1331,7 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
   font-family: var(--font-mono);
 }
 .submit-marker.ok { background: var(--ok-soft); color: var(--ok); }
-.submit-marker.warn { background: var(--warn-soft); color: var(--warn); }
+.submit-marker.warn { background: var(--warn-soft); color: var(--warn-ink); }
 
 /* ============================================================
    Toast
@@ -1313,7 +1420,7 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
 }
 .view-tab[aria-disabled="true"] { cursor: not-allowed; opacity: 0.55; }
 [data-theme="light"] .view-tab.active {
-  box-shadow: 0 1px 2px rgba(30,25,15,0.06), inset 0 0 0 1px var(--border);
+  box-shadow: 0 1px 2px rgba(60,64,67,0.10), inset 0 0 0 1px var(--border);
 }
 
 /* persistent ⌘K search — looks like an input, behaves like a button */
@@ -1341,9 +1448,8 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
 .topbar-search .search-icon { font-size: 13px; opacity: 0.8; }
 .topbar-search .search-text { flex: 1; text-align: left; }
 .topbar-search .search-kbd { display: flex; gap: 3px; }
-.topbar-search .kbd { background: rgba(0,0,0,0.18); border-color: var(--border-2); }
+.topbar-search .kbd { background: var(--kbd-bg); border-color: var(--border-2); }
 [data-theme="light"] .topbar-search { background: var(--bg-2); }
-[data-theme="light"] .topbar-search .kbd { background: rgba(0,0,0,0.04); }
 
 /* inline draft-% progress pill */
 .topbar-inline-progress {
@@ -1683,8 +1789,8 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
   background: var(--border-3);
 }
 
-[data-theme="light"] .stat-hero { background: #ffffff; background-image: var(--hero-glow); }
-[data-theme="light"] .stat-v2 { background: #ffffff; }
+[data-theme="light"] .stat-hero { background: var(--panel); background-image: var(--hero-glow); }
+[data-theme="light"] .stat-v2 { background: var(--panel); }
 
 /* ============================================================
    v2 BLOCK CARDS — replace the table; click opens existing modal
@@ -1723,19 +1829,26 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
+  box-shadow: inset 0 1px 0 var(--lip);
   transition: all 0.15s var(--ease);
   overflow: hidden;
   cursor: pointer;
 }
+/* Every box-shadow on a card has to re-declare the lip, since box-shadow doesn't
+   accumulate across rules — omitting it here would drop the lit edge on hover. */
 .block-card:hover {
   border-color: var(--border-2);
   transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+  box-shadow: inset 0 1px 0 var(--lip), var(--shadow-sm);
 }
 .block-card.selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ghost);
+  box-shadow: inset 0 1px 0 var(--lip), 0 0 0 3px var(--accent-ghost);
 }
+/* Synced rows drop back to the recessed page surface with a cool border — an
+   opaque colour, not a translucent cool wash: .block-card.submitted *replaces*
+   the panel background, so a translucent value composites over the page instead
+   of over the card and the row goes muddy grey-violet. */
 .block-card.submitted {
   background: var(--bg-2);
   border-color: var(--cool-soft);
@@ -1839,7 +1952,7 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
   background: currentColor;
 }
 .status-pill.draft  { background: var(--accent-soft); color: var(--accent); }
-.status-pill.ready  { background: var(--accent-soft); color: var(--accent-strong); }
+.status-pill.ready  { background: var(--accent-soft); color: var(--accent); }
 .status-pill.synced { background: var(--cool-soft); color: var(--cool); }
 .status-pill.empty  { background: var(--danger-soft); color: var(--danger); }
 
@@ -1852,9 +1965,9 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
 .block-card.selected .block-card-actions { opacity: 1; }
 .block-card-actions .inline-form { display: inline-flex; }
 
-[data-theme="light"] .block-card { background: #ffffff; box-shadow: 0 1px 0 rgba(30,25,15,0.04); }
-[data-theme="light"] .block-card:hover { box-shadow: 0 3px 8px rgba(30,25,15,0.06); }
-[data-theme="light"] .block-card.submitted { background: var(--panel-2); }
+[data-theme="light"] .block-card { background: var(--panel); box-shadow: inset 0 1px 0 var(--lip), 0 1px 0 rgba(60,64,67,0.06); }
+[data-theme="light"] .block-card:hover { box-shadow: inset 0 1px 0 var(--lip), 0 3px 8px rgba(60,64,67,0.10); }
+[data-theme="light"] .block-card.submitted { background: var(--bg-2); }
 
 /* ============================================================
    v2 SMART GAP ROW
@@ -2051,4 +2164,225 @@ h3 { margin: 0 0 10px; font-size: var(--fs-md); color: var(--muted); font-weight
 }
 .setup-foot .hint code { font-family: var(--font-mono); color: var(--text-2); }
 .btn-lg { padding: 10px 22px; font-size: var(--fs-md); }
+
+/* ============================================================
+   Day-review UX pass
+   Review mode, ready-to-submit strip, per-block actions, undoable
+   toasts, ribbon edge handles, pending-day chips.
+   ============================================================ */
+
+/* --- Review drafts button (topbar row 2) --- */
+.btn-accent-soft {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-soft);
+}
+.btn-accent-soft:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.btn-accent-soft .kbd { background: var(--kbd-bg); border-color: var(--border-2); color: inherit; }
+
+/* --- Ready-to-submit strip --- */
+.ready-strip {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 14px; margin-bottom: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.ready-strip-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.ready-label {
+  font-size: var(--fs-xs); color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+  white-space: nowrap;
+}
+.ready-bar {
+  position: relative; flex: 1; min-width: 80px;
+  height: 6px; border-radius: 99px; overflow: hidden;
+  background: var(--panel-2);
+}
+.ready-bar .fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  border-radius: 99px;
+  transition: width 0.6s var(--ease);
+}
+.ready-bar.ok .fill { background: var(--ok); }
+.ready-bar.warn .fill { background: var(--warn); }
+.ready-bar .mark { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--border-3); }
+.ready-count {
+  font-size: var(--fs-sm); font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap;
+}
+.ready-issue { font-size: var(--fs-sm); color: var(--warn); white-space: nowrap; }
+.ready-ok { font-size: var(--fs-sm); color: var(--ok); white-space: nowrap; }
+
+/* --- Block card: "needs work" pill replaces the old "empty" one --- */
+.status-pill.needs-work { background: var(--danger-soft); color: var(--danger); }
+
+/* --- Per-block actions --- */
+.block-card-actions .btn-log {
+  background: var(--cool-soft); color: var(--cool); border-color: var(--cool-soft);
+  font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 0 6px;
+}
+.block-card-actions .btn-log:hover { border-color: var(--cool); }
+.block-card-actions .logged-at {
+  font-size: var(--fs-xs); color: var(--muted); font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+/* Green wash on the row that was just saved in place — the only cue that
+   something happened, now that saving no longer reloads the page. */
+@keyframes savedFlash { 0% { opacity: 0 } 18% { opacity: 1 } 100% { opacity: 0 } }
+.block-card.just-saved::after {
+  content: ""; position: absolute; inset: 0;
+  background: rgb(var(--ok-rgb) / 0.16);
+  border-radius: var(--r-md);
+  pointer-events: none; z-index: 3;
+  animation: savedFlash 1.1s var(--ease) forwards;
+}
+
+/* --- Editor modal: save-in-place banner + review position --- */
+.modal-head-right { display: flex; align-items: center; gap: 10px; }
+.review-pos {
+  font-size: var(--fs-xs); font-family: var(--font-mono); color: var(--accent);
+  text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap;
+}
+.review-pos[hidden] { display: none; }
+.save-in-place {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px;
+  background: var(--cool-ghost);
+  border: 1px solid var(--cool-soft);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs); color: var(--text-2);
+}
+.save-in-place .tag {
+  font-family: var(--font-mono); color: var(--cool);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+
+/* --- Ribbon: draggable edges on draft bars --- */
+.draft-handle {
+  position: absolute; top: -3px; bottom: -3px; width: 9px;
+  cursor: ew-resize; border-radius: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s var(--ease);
+}
+.draft-handle.start { left: -4px; }
+.draft-handle.end { right: -4px; }
+.draft-bar:hover .draft-handle,
+.ribbon.is-dragging .draft-handle { opacity: 0.9; }
+
+/* --- Undoable toast --- */
+.toast-undo {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px;
+  background: transparent; color: var(--accent);
+  border: 1px solid var(--accent-soft); border-radius: var(--r-sm);
+  font-size: var(--fs-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.toast-undo:hover { border-color: var(--accent); }
+.toast-undo .kbd {
+  background: var(--kbd-bg); border-color: var(--border-2);
+  font-size: 9px; letter-spacing: 0; text-transform: none;
+}
+
+/* --- Heatmap: summary line, legend, pending-day chips --- */
+.heatmap-summary { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.heatmap-summary .n {
+  font-size: var(--fs-xl); font-weight: 600; line-height: 1;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--text);
+}
+.heatmap-summary .n .of { color: var(--muted-2); font-weight: 500; }
+.heatmap-summary .lbl {
+  font-size: var(--fs-xs); color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+}
+.heatmap-legend {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: var(--fs-xs); color: var(--muted);
+}
+.heatmap-legend .leg { display: inline-flex; align-items: center; gap: 5px; }
+.heatmap-legend .swatch { width: 12px; height: 12px; border-radius: 3px; }
+.heatmap-legend .swatch.complete {
+  background: rgb(var(--accent-rgb) / 0.65);
+  box-shadow: inset 0 0 0 1.5px var(--ok);
+}
+.heatmap-legend .swatch.partial {
+  background:
+    repeating-linear-gradient(-45deg, rgb(var(--warn-rgb) / 0.55) 0 2px, transparent 2px 5px),
+    rgb(var(--accent-rgb) / 0.42);
+  box-shadow: inset 0 0 0 1.5px var(--warn);
+}
+.heatmap-legend .swatch.none { background: var(--panel-2); }
+
+/* Pending days read as a hatched wedge, not just a tint — a colour difference
+   alone is too easy to miss at this cell size. */
+.heatmap-cell.partial { background: rgb(var(--accent-rgb) / 0.42); }
+.heatmap-cell.partial::before {
+  content: ""; position: absolute; inset: 0;
+  border-radius: 2px;
+  background: repeating-linear-gradient(-45deg, rgb(var(--warn-rgb) / 0.55) 0 2px, transparent 2px 5px);
+  pointer-events: none;
+}
+/* Marks sit on a filled disc so they stay legible over any activity shade. */
+.heatmap-cell .heatmap-mark.complete,
+.heatmap-cell .heatmap-mark.partial {
+  text-shadow: none;
+  font-size: 10px;
+  z-index: 1;
+}
+.heatmap-cell .heatmap-mark.complete::before,
+.heatmap-cell .heatmap-mark.partial::before {
+  content: ""; position: absolute;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 14px; height: 14px; border-radius: 99px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.55);
+  z-index: -1;
+}
+.heatmap-cell .heatmap-mark.complete { color: var(--ok-fg); }
+.heatmap-cell .heatmap-mark.complete::before { background: var(--ok); }
+.heatmap-cell .heatmap-mark.partial { color: var(--warn-fg); }
+.heatmap-cell .heatmap-mark.partial::before { background: var(--warn); }
+
+.pending-days { margin-top: 10px; border-color: var(--warn-soft); }
+.pending-days-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 8px;
+}
+.pending-days-head .n {
+  font-size: var(--fs-xs); color: var(--warn);
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+}
+.pending-days-head .b { font-size: var(--fs-xs); color: var(--muted); font-family: var(--font-mono); }
+.pending-days-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pending-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border-radius: 99px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  font-size: var(--fs-xs); color: var(--text-2); font-family: var(--font-mono);
+  white-space: nowrap;
+  transition: all 0.12s var(--ease);
+}
+.pending-chip:hover { border-color: var(--warn); color: var(--text); }
+.pending-chip .count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 14px; height: 14px; border-radius: 99px;
+  background: var(--warn); color: var(--warn-fg);
+  font-size: 9px; font-weight: 700;
+}
+
+/* --- Submit dialog --- */
+.submit-summary .value.warn { color: var(--warn); }
+.submit-warn {
+  padding: 10px 12px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm); color: var(--text);
+}
+.submit-item.skip .d { color: var(--warn); font-style: italic; }
 

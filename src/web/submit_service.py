@@ -15,11 +15,20 @@ def _ticket_summary_lookup() -> dict[str, tuple[str, str]]:
     return {r["key"]: (r["summary"] or "", r["project_key"] or "") for r in rows}
 
 
-def submit_day(date_str: str) -> dict:
+def submit_day(date_str: str, block_ids: list[int] | None = None) -> dict:
+    """Push draft blocks for a day to Jira (and the sheet, when configured).
+
+    `block_ids` narrows the push to specific blocks — used by the per-block "Log"
+    button and the bulk bar. Blocks missing a ticket *or* a description are
+    skipped, which is what the submit dialog tells the user will happen.
+    """
     blocks = blocks_service.list_for_date(date_str)
     drafts = [b for b in blocks if b["status"] == "draft"]
-    missing_ticket = [b for b in drafts if not b["ticket_key"]]
-    ready = [b for b in drafts if b["ticket_key"]]
+    if block_ids is not None:
+        wanted = {int(i) for i in block_ids}
+        drafts = [b for b in drafts if b["id"] in wanted]
+    not_ready = [b for b in drafts if not blocks_service.is_ready(b)]
+    ready = [b for b in drafts if blocks_service.is_ready(b)]
 
     if not drafts:
         return {"submitted": 0, "failed": 0, "skipped": 0, "errors": ["No draft blocks to submit."]}
@@ -91,8 +100,15 @@ def submit_day(date_str: str) -> dict:
             errors.append(f"Block {b['id']} ({b['ticket_key']}): {e}")
             log.exception("submit failed for block %s", b["id"])
 
-    skipped = len(missing_ticket)
-    if missing_ticket:
-        errors.append(f"{skipped} block(s) skipped: no ticket selected.")
+    skipped = len(not_ready)
+    if not_ready:
+        no_ticket = sum(1 for b in not_ready if not b["ticket_key"])
+        no_desc = skipped - no_ticket
+        reasons = []
+        if no_ticket:
+            reasons.append(f"{no_ticket} with no ticket")
+        if no_desc:
+            reasons.append(f"{no_desc} with no description")
+        errors.append(f"{skipped} block(s) skipped: {', '.join(reasons)}.")
 
     return {"submitted": submitted, "failed": failed, "skipped": skipped, "errors": errors}

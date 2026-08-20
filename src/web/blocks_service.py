@@ -1,5 +1,6 @@
 import logging
 import time as time_mod
+from datetime import datetime
 
 from .. import config, db
 from ..llm import LLMUnavailable
@@ -7,6 +8,14 @@ from ..timeline import describer
 from . import polish_service
 
 log = logging.getLogger(__name__)
+
+# Every column of time_blocks, in schema order — used by the undo snapshot so a
+# restore puts a day back exactly as it was, ids included.
+_BLOCK_COLUMNS = (
+    "id", "date", "start_ts", "end_ts", "project_label", "ticket_key", "description",
+    "minutes", "status", "jira_worklog_id", "sheet_row_appended_at", "submitted_at",
+    "created_at", "updated_at",
+)
 
 
 def list_for_date(date_str: str) -> list[dict]:
@@ -94,6 +103,24 @@ def bulk_set_ticket(block_ids: list[int], ticket_key: str | None) -> int:
         return cur.rowcount or 0
 
 
+def retime(block_id: int, start_ts: int, end_ts: int) -> None:
+    """Move a block's boundaries without touching its ticket or description.
+
+    `update()` assigns ticket_key unconditionally, so it can't be used to nudge
+    times alone — this keeps the ribbon's edge-drag from wiping the ticket.
+    """
+    if end_ts <= start_ts:
+        return
+    minutes = max(1, round((end_ts - start_ts) / 60))
+    now = int(time_mod.time())
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE time_blocks SET start_ts = ?, end_ts = ?, minutes = ?, updated_at = ? "
+            "WHERE id = ? AND status = 'draft'",
+            (start_ts, end_ts, minutes, now, block_id),
+        )
+
+
 def delete(block_id: int) -> None:
     with db.connect() as conn:
         conn.execute("DELETE FROM time_blocks WHERE id = ? AND status = 'draft'", (block_id,))
@@ -103,6 +130,133 @@ def delete_all_drafts(date_str: str) -> int:
     with db.connect() as conn:
         cur = conn.execute("DELETE FROM time_blocks WHERE date = ? AND status = 'draft'", (date_str,))
         return cur.rowcount or 0
+
+
+def duplicate(block_id: int) -> int | None:
+    """Copy a block onto the same window as a fresh draft.
+
+    The copy overlaps its source on purpose — the point is to keep the ticket and
+    description and then retime one of them, which is faster than retyping both.
+    """
+    b = get(block_id)
+    if not b:
+        return None
+    return create(
+        b["date"], b["start_ts"], b["end_ts"],
+        b["project_label"], b["ticket_key"], b["description"] or "",
+    )
+
+
+def split(block_id: int) -> str | None:
+    """Split a draft in half at the nearest 5-minute mark.
+
+    Returns the split time as HH:MM, or None when the block is too short to
+    divide into two halves of at least 5 minutes each.
+    """
+    b = get(block_id)
+    if not b or b["status"] != "draft":
+        return None
+    mid = int(round((b["start_ts"] + (b["end_ts"] - b["start_ts"]) / 2) / 300) * 300)
+    if mid - b["start_ts"] < 300 or b["end_ts"] - mid < 300:
+        return None
+    retime(block_id, b["start_ts"], mid)
+    create(b["date"], mid, b["end_ts"], b["project_label"], b["ticket_key"], b["description"] or "")
+    return datetime.fromtimestamp(mid).strftime("%H:%M")
+
+
+def merge_with_next(block_id: int) -> tuple[str, str] | None:
+    """Fold the following draft block into this one.
+
+    The survivor keeps this block's ticket (falling back to the next block's when
+    empty) and both descriptions, joined by a blank line. Returns the merged
+    (start_hm, end_hm) or None when there is no draft block after this one.
+    """
+    b = get(block_id)
+    if not b or b["status"] != "draft":
+        return None
+    later = [
+        x for x in list_for_date(b["date"])
+        if x["start_ts"] > b["start_ts"] and x["status"] == "draft"
+    ]
+    if not later:
+        return None
+    nxt = later[0]
+    parts = [(b["description"] or "").strip(), (nxt["description"] or "").strip()]
+    merged_desc = "\n\n".join(p for p in parts if p)
+    now = int(time_mod.time())
+    end_ts = max(b["end_ts"], nxt["end_ts"])
+    with db.connect() as conn:
+        conn.execute(
+            """UPDATE time_blocks
+               SET end_ts = ?, minutes = ?, ticket_key = ?, description = ?,
+                   project_label = COALESCE(project_label, ?), updated_at = ?
+               WHERE id = ?""",
+            (
+                end_ts, max(1, round((end_ts - b["start_ts"]) / 60)),
+                b["ticket_key"] or nxt["ticket_key"], merged_desc,
+                nxt["project_label"], now, b["id"],
+            ),
+        )
+        conn.execute("DELETE FROM time_blocks WHERE id = ?", (nxt["id"],))
+    return (
+        datetime.fromtimestamp(b["start_ts"]).strftime("%H:%M"),
+        datetime.fromtimestamp(end_ts).strftime("%H:%M"),
+    )
+
+
+def is_ready(block: dict) -> bool:
+    """A draft is submittable only with both a ticket and a description."""
+    return bool(block.get("ticket_key") and (block.get("description") or "").strip())
+
+
+# ---------------------------------------------------------------------------
+# Undo — in-memory, per-date snapshots of the whole day
+# ---------------------------------------------------------------------------
+# The app is single-user and local, so an in-process stack is enough; it resets
+# when the server restarts, which is the same lifetime as the browser session
+# that would use it. Snapshots are whole-day so restores can't half-apply.
+
+_UNDO_MAX = 20
+_undo_stacks: dict[str, list[dict]] = {}
+
+
+def push_undo(date_str: str, label: str) -> None:
+    """Snapshot a day *before* mutating it. Call once per user-visible action."""
+    stack = _undo_stacks.setdefault(date_str, [])
+    stack.append({"label": label, "rows": list_for_date(date_str)})
+    if len(stack) > _UNDO_MAX:
+        stack.pop(0)
+
+
+def peek_undo(date_str: str) -> str | None:
+    stack = _undo_stacks.get(date_str) or []
+    return stack[-1]["label"] if stack else None
+
+
+def pop_undo(date_str: str) -> str | None:
+    """Restore the most recent snapshot. Returns the label that was undone."""
+    stack = _undo_stacks.get(date_str) or []
+    if not stack:
+        return None
+    entry = stack.pop()
+    cols = ", ".join(_BLOCK_COLUMNS)
+    marks = ", ".join("?" * len(_BLOCK_COLUMNS))
+    with db.connect() as conn:
+        conn.execute("DELETE FROM time_blocks WHERE date = ?", (date_str,))
+        conn.executemany(
+            f"INSERT INTO time_blocks ({cols}) VALUES ({marks})",
+            [tuple(r.get(c) for c in _BLOCK_COLUMNS) for r in entry["rows"]],
+        )
+    return entry["label"]
+
+
+def clear_undo(date_str: str) -> None:
+    """Drop the undo history for a day.
+
+    Used after a Jira push: the local rows could be rolled back but the worklogs
+    couldn't, so offering undo would invite duplicate submissions.
+    """
+    _undo_stacks.pop(date_str, None)
 
 
 def _describe_segment(seg, llm_enabled: bool) -> tuple[str, bool, bool, str | None]:

@@ -1,5 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" role="img" aria-label="Time Logger">
-  <rect x="2"  y="5"  width="20" height="4" rx="1.2" fill="#E58A57"/>
-  <rect x="2"  y="11" width="13" height="4" rx="1.2" fill="#E58A57" opacity="0.55"/>
-  <rect x="2"  y="17" width="17" height="4" rx="1.2" fill="#E58A57" opacity="0.8"/>
+  <!-- Favicon can't read the app's CSS vars, so the palette is inlined: the
+       mid-tone Gemini blue/violet reads on both a light and a dark tab strip,
+       and the media query swaps to the lighter dark-theme tints where the
+       browser supports it (Chrome/Edge do; others keep the defaults). -->
+  <style>
+    .a { fill: #0B57D0; }
+    .b { fill: #7B4FD8; }
+    @media (prefers-color-scheme: dark) {
+      .a { fill: #A8C7FA; }
+      .b { fill: #D3BBFC; }
+    }
+  </style>
+  <rect class="a" x="2"  y="5"  width="20" height="4" rx="1.2"/>
+  <rect class="b" x="2"  y="11" width="13" height="4" rx="1.2"/>
+  <rect class="a" x="2"  y="17" width="17" height="4" rx="1.2" opacity="0.6"/>
 </svg>

@@ -1,6 +1,18 @@
-// Time Logger — client glue (theme, command palette, keyboard shortcuts, submit confirm)
+// Time Logger — client glue.
+//
+// Mutations on the day view go through htmx: the server re-renders the whole day
+// and the client swaps only the live regions (#day-live and the out-of-band
+// siblings listed in OOB_REGIONS). Nothing navigates, so the scroll position, the
+// selected block and an in-progress review session all survive a save — which is
+// what the "saves in place" promise in the editor is about.
+//
+// Anything that binds to swapped-in elements has to be re-bound afterwards; those
+// initialisers live in initDynamic() and run again on every htmx:afterSettle.
+// Document-level listeners are registered once, at the bottom.
 (function () {
   "use strict";
+
+  const OOB_REGIONS = "#topbar-live,#ribbon-live,#rail-live,#modals-live";
 
   const TICKETS = (function () {
     const el = document.getElementById("tickets-data");
@@ -9,14 +21,23 @@
   })();
 
   const COMMANDS = [
-    { id: "seed",   label: "Auto-seed blocks from detected work", hint: "⇧S", run: autoSeed },
-    { id: "submit", label: "Submit day to Jira & Sheets",          hint: "Ctrl+⏎", run: openSubmitConfirm },
-    { id: "new",    label: "Add a new block manually",             hint: "N", run: focusAddBlock },
-    { id: "prev",   label: "Go to previous day",                   hint: "[", run: () => clickNav("#nav-prev") },
-    { id: "next",   label: "Go to next day",                       hint: "]", run: () => clickNav("#nav-next") },
-    { id: "today",  label: "Jump to today",                        hint: "T", run: goToday },
-    { id: "theme",  label: "Toggle light / dark theme",            hint: "",  run: toggleTheme },
+    { id: "review", label: "Review every draft in order",           hint: "R", run: () => startReview() },
+    { id: "seed",   label: "Auto-seed blocks from detected work",   hint: "⇧S", run: autoSeed },
+    { id: "submit", label: "Submit day to Jira & Sheets",           hint: "Ctrl+⏎", run: openSubmitConfirm },
+    { id: "new",    label: "Add a new block manually",              hint: "N", run: focusAddBlock },
+    { id: "undo",   label: "Undo the last change",                  hint: "Ctrl+Z", run: () => undo() },
+    { id: "prev",   label: "Go to previous day",                    hint: "[", run: () => clickNav("#nav-prev") },
+    { id: "next",   label: "Go to next day",                        hint: "]", run: () => clickNav("#nav-next") },
+    { id: "today",  label: "Jump to today",                         hint: "T", run: goToday },
+    { id: "theme",  label: "Toggle light / dark theme",             hint: "",  run: toggleTheme },
   ];
+
+  // ---------------- Live-region state that has to outlive a swap ----------------
+  let selectedId = null;        // block id carrying the .selected ring
+  let review = null;            // { ids: [...] } while a review session is running
+  let advanceFrom = null;       // block id whose save should open the next draft
+  let savedScrollY = null;      // scroll position captured before a mutation
+  let ribbonZoom = "day";       // active ribbon zoom pill
 
   // ---------------- Theme ----------------
   function toggleTheme() {
@@ -38,10 +59,109 @@
     ta.setSelectionRange(ta.value.length, ta.value.length);
   }
 
+  // ---------------- Live POST (for actions with no markup of their own) ----------------
+  // Builds a throwaway htmx-wired form so drags and dynamic actions land in the
+  // same in-place-swap path as the declarative buttons.
+  function livePost(url, values) {
+    const f = document.createElement("form");
+    f.method = "post";
+    f.action = url;
+    f.hidden = true;
+    f.setAttribute("hx-post", url);
+    f.setAttribute("hx-target", "#day-live");
+    f.setAttribute("hx-swap", "outerHTML");
+    f.setAttribute("hx-select", "#day-live");
+    f.setAttribute("hx-select-oob", OOB_REGIONS);
+    Object.keys(values || {}).forEach(k => {
+      const i = document.createElement("input");
+      i.type = "hidden";
+      i.name = k;
+      i.value = String(values[k]);
+      f.appendChild(i);
+    });
+    document.body.appendChild(f);
+    if (window.htmx) {
+      f.addEventListener("htmx:afterRequest", () => f.remove());
+      window.htmx.process(f);
+      f.requestSubmit();
+    } else {
+      f.submit();  // no htmx: fall back to a full page post
+    }
+  }
+
+  function currentDate() {
+    const el = document.querySelector("[data-day-iso]");
+    return el ? el.dataset.dayIso : "";
+  }
+
+  // ---------------- Undo ----------------
+  function undo() {
+    const form = document.getElementById("undo-form");
+    if (form) form.requestSubmit();
+  }
+
   // ---------------- Submit confirm ----------------
   function openSubmitConfirm() {
     const dlg = document.getElementById("submit-confirm");
     if (dlg && !dlg.open) dlg.showModal();
+  }
+
+  // ---------------- Review mode ----------------
+  // Walks the day's drafts in start-time order without leaving the keyboard.
+  // The queue is captured once so blocks the user retimes mid-review don't get
+  // revisited or skipped; ids that vanish (deleted, merged) are stepped over.
+  function draftIds() {
+    return Array.from(document.querySelectorAll('.block-card[data-draft="1"]'))
+      .map(el => parseInt(el.dataset.blockId, 10))
+      .filter(n => !isNaN(n));
+  }
+
+  function startReview() {
+    const ids = draftIds();
+    if (!ids.length) { showToast("No drafts to review"); return; }
+    review = { ids: ids };
+    openBlock(ids[0]);
+  }
+
+  function nextInReview(fromId) {
+    if (!review) return null;
+    const alive = draftIds();
+    const i = review.ids.indexOf(fromId);
+    if (i < 0) return null;
+    for (let j = i + 1; j < review.ids.length; j++) {
+      if (alive.indexOf(review.ids[j]) !== -1) return review.ids[j];
+    }
+    return null;
+  }
+
+  function updateReviewIndicator(dlg, id) {
+    const el = dlg.querySelector(".review-pos");
+    if (!el) return;
+    if (!review || review.ids.indexOf(id) === -1) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = "Review " + (review.ids.indexOf(id) + 1) + " of " + review.ids.length;
+  }
+
+  function openBlock(id) {
+    // Only one <dialog> can be modal at a time — close whatever is up (e.g. the
+    // submit confirmation the user clicked "Fix" in).
+    document.querySelectorAll("dialog[open]").forEach(d => d.close());
+    const dlg = document.getElementById("edit-" + id);
+    if (!dlg) return;
+    selectedId = id;
+    applySelection();
+    dlg.showModal();
+    updateReviewIndicator(dlg, id);
+
+    // Land the cursor on whatever is actually missing: the ticket picker when
+    // there's no ticket yet, otherwise the end of the description.
+    const combo = dlg.querySelector(".ticket-combo");
+    const trigger = combo && combo.querySelector(".ticket-combo-trigger");
+    const ta = dlg.querySelector("textarea[name='description']");
+    setTimeout(() => {
+      if (combo && !combo.dataset.value && trigger) { trigger.focus(); return; }
+      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    }, 30);
   }
 
   // ---------------- Navigation helpers ----------------
@@ -74,23 +194,28 @@
   function draftableRows() {
     return rows().filter(r => !r.classList.contains("submitted"));
   }
+  // Re-paints the .selected ring from `selectedId` — called after every swap so
+  // the ring doesn't vanish when the block list is replaced.
+  function applySelection() {
+    rows().forEach(r => {
+      r.classList.toggle("selected", parseInt(r.dataset.blockId, 10) === selectedId);
+    });
+  }
   function stepSelection(dir) {
     const rs = rows();
     if (rs.length === 0) return;
-    const curIdx = rs.findIndex(r => r.classList.contains("selected"));
+    const curIdx = rs.findIndex(r => parseInt(r.dataset.blockId, 10) === selectedId);
     let nextIdx;
     if (curIdx === -1) nextIdx = dir > 0 ? 0 : rs.length - 1;
     else nextIdx = Math.max(0, Math.min(rs.length - 1, curIdx + dir));
-    rs.forEach(r => r.classList.remove("selected"));
-    rs[nextIdx].classList.add("selected");
+    selectedId = parseInt(rs[nextIdx].dataset.blockId, 10);
+    applySelection();
     rs[nextIdx].scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
   function editSelectedBlock() {
     const selected = document.querySelector(".block-row.selected") || draftableRows()[0];
     if (!selected) return;
-    const id = selected.dataset.blockId;
-    const dlg = document.getElementById("edit-" + id);
-    if (dlg && !dlg.open) dlg.showModal();
+    openBlock(parseInt(selected.dataset.blockId, 10));
   }
 
   // Click-to-select
@@ -98,19 +223,9 @@
     const row = e.target.closest(".block-row");
     if (!row) return;
     // Ignore clicks on action buttons / delete form
-    if (e.target.closest(".block-actions")) return;
-    rows().forEach(r => r.classList.remove("selected"));
-    row.classList.add("selected");
-  });
-
-  // Double-click row → edit
-  document.addEventListener("dblclick", (e) => {
-    const row = e.target.closest(".block-row");
-    if (!row) return;
-    if (row.classList.contains("submitted")) return;
-    const id = row.dataset.blockId;
-    const dlg = document.getElementById("edit-" + id);
-    if (dlg && !dlg.open) dlg.showModal();
+    if (e.target.closest(".block-actions") || e.target.closest(".block-card-actions")) return;
+    selectedId = parseInt(row.dataset.blockId, 10);
+    applySelection();
   });
 
   // ---------------- Command palette ----------------
@@ -212,15 +327,60 @@
   }
 
   // ---------------- Toast ----------------
-  function showToast(msg) {
+  // Undoable toasts stay up for 8s — long enough to notice a mistaken delete and
+  // take it back, which is why deletes no longer prompt for confirmation.
+  function showToast(msg, undoable) {
     let wrap = document.querySelector(".toast-wrap");
     if (!wrap) {
       wrap = document.createElement("div"); wrap.className = "toast-wrap";
       document.body.appendChild(wrap);
     }
-    const t = document.createElement("div"); t.className = "toast"; t.textContent = msg;
+    wrap.querySelectorAll(".toast").forEach(t => t.remove());
+
+    const t = document.createElement("div");
+    t.className = "toast";
+    const label = document.createElement("span");
+    label.textContent = msg;
+    t.appendChild(label);
+
+    if (undoable) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "toast-undo";
+      btn.innerHTML = 'Undo <span class="kbd">Ctrl Z</span>';
+      btn.addEventListener("click", () => { t.remove(); undo(); });
+      t.appendChild(btn);
+    }
+
     wrap.appendChild(t);
-    setTimeout(() => { t.style.opacity = "0"; setTimeout(() => t.remove(), 300); }, 2200);
+    const ttl = undoable ? 8000 : 3000;
+    setTimeout(() => { t.style.opacity = "0"; setTimeout(() => t.remove(), 300); }, ttl);
+  }
+
+  // Server-driven toast: every mutation response carries a #toast-data payload
+  // inside #day-live, so it arrives with the swap and is read exactly once.
+  function consumeToast() {
+    const el = document.getElementById("toast-data");
+    if (!el) return;
+    let data;
+    try { data = JSON.parse(el.textContent || "{}"); } catch (e) { return; }
+    el.remove();
+    if (data.message) showToast(data.message, !!data.undoable);
+
+    // Flash the row that was just saved, and bring a freshly created one into view.
+    if (data.saved_id) {
+      const card = document.getElementById("block-" + data.saved_id);
+      if (card) {
+        card.classList.add("just-saved");
+        setTimeout(() => card.classList.remove("just-saved"), 1200);
+      }
+    }
+    if (data.focus_id) {
+      selectedId = data.focus_id;
+      applySelection();
+      const card = document.getElementById("block-" + data.focus_id);
+      if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
   }
 
   // ---------------- Global keyboard shortcuts ----------------
@@ -237,10 +397,21 @@
       return;
     }
 
-    // Ctrl/Cmd+Enter: submit the form of an open dialog, otherwise open submit confirm
+    // Ctrl/Cmd+Z: undo the last mutation. Skipped while typing so it stays the
+    // browser's own text undo inside the description field.
+    if (mod && e.key.toLowerCase() === "z" && !typing) {
+      e.preventDefault();
+      undo();
+      return;
+    }
+
+    // Ctrl/Cmd+Enter: in the editor this is "Save & next"; elsewhere it opens the
+    // submit confirmation.
     if (mod && e.key === "Enter") {
       e.preventDefault();
       if (openDialog) {
+        const next = openDialog.querySelector(".btn-save-next");
+        if (next) { next.click(); return; }
         const form = openDialog.querySelector("form[method='post'], form[action]");
         if (form) form.requestSubmit();
       } else {
@@ -259,6 +430,8 @@
       case "ArrowUp":   e.preventDefault(); stepSelection(-1); return;
       case "e":
       case "E":         editSelectedBlock(); return;
+      case "r":
+      case "R":         startReview(); return;
       case "[":         clickNav("#nav-prev"); return;
       case "]":         clickNav("#nav-next"); return;
       case "t":
@@ -282,48 +455,63 @@
   });
 
   // ---------------- Bulk ticket assignment ----------------
-  function initBulkTicket() {
+  function bulkRowChecks() { return Array.from(document.querySelectorAll(".bulk-row-check")); }
+  function bulkCheckedIds() {
+    return bulkRowChecks().filter(c => c.checked).map(c => c.value);
+  }
+
+  function updateBulkBar() {
     const bar = document.getElementById("bulk-bar");
     const nLabel = document.getElementById("bulk-bar-n");
-    const selectAll = document.getElementById("bulk-select-all");
-    const clearBtn = document.getElementById("bulk-bar-clear");
     if (!bar || !nLabel) return;
-
-    function rowChecks() { return Array.from(document.querySelectorAll(".bulk-row-check")); }
-    function checkedRowChecks() { return rowChecks().filter(c => c.checked); }
-
-    function update() {
-      const n = checkedRowChecks().length;
-      nLabel.textContent = String(n);
-      bar.hidden = n === 0;
-      if (selectAll) {
-        const total = rowChecks().length;
-        selectAll.checked = n > 0 && n === total;
-        selectAll.indeterminate = n > 0 && n < total;
-      }
+    const checks = bulkRowChecks();
+    const n = checks.filter(c => c.checked).length;
+    nLabel.textContent = String(n);
+    bar.hidden = n === 0;
+    const selectAll = document.getElementById("bulk-select-all");
+    if (selectAll) {
+      selectAll.checked = n > 0 && n === checks.length;
+      selectAll.indeterminate = n > 0 && n < checks.length;
     }
+  }
 
-    document.addEventListener("change", (e) => {
-      if (e.target && e.target.classList && e.target.classList.contains("bulk-row-check")) update();
+  // The row checkboxes belong to #bulk-ticket-form, so the log action needs its
+  // own copy of the selection.
+  function submitBulkLog() {
+    const ids = bulkCheckedIds();
+    const form = document.getElementById("bulk-log-form");
+    if (!form) return;
+    if (!ids.length) { showToast("No blocks selected"); return; }
+    form.querySelectorAll('input[name="block_ids"]').forEach(i => i.remove());
+    ids.forEach(id => {
+      const i = document.createElement("input");
+      i.type = "hidden"; i.name = "block_ids"; i.value = id;
+      form.appendChild(i);
     });
+    form.requestSubmit();
+  }
 
+  function initBulkTicket() {
+    const selectAll = document.getElementById("bulk-select-all");
     if (selectAll) {
       selectAll.addEventListener("change", () => {
-        rowChecks().forEach(c => { c.checked = selectAll.checked; });
-        update();
+        bulkRowChecks().forEach(c => { c.checked = selectAll.checked; });
+        updateBulkBar();
       });
     }
-
+    const clearBtn = document.getElementById("bulk-bar-clear");
     if (clearBtn) {
       clearBtn.addEventListener("click", () => {
-        rowChecks().forEach(c => { c.checked = false; });
-        update();
+        bulkRowChecks().forEach(c => { c.checked = false; });
+        updateBulkBar();
       });
     }
-
-    update();
+    updateBulkBar();
   }
-  initBulkTicket();
+
+  document.addEventListener("change", (e) => {
+    if (e.target && e.target.classList && e.target.classList.contains("bulk-row-check")) updateBulkBar();
+  });
 
   // ---------------- Tickets browser modal ----------------
   function initTicketsBrowser() {
@@ -352,7 +540,6 @@
     });
     obs.observe(modal, { attributes: true, attributeFilter: ["open"] });
   }
-  initTicketsBrowser();
 
   // ---------------- Ticket combobox (custom dropdown with status pills) ----------------
   function initTicketCombos() {
@@ -493,15 +680,18 @@
       });
     });
 
-    // Close any open combo when clicking outside
-    document.addEventListener("click", (e) => {
-      if (!e.target.closest(".ticket-combo")) closeAll(null);
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeAll(null);
-    });
+    // Close any open combo when clicking outside. Bound once — the handler looks
+    // combos up by selector, so it keeps working across swaps.
+    if (!initTicketCombos.bound) {
+      initTicketCombos.bound = true;
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest(".ticket-combo")) closeAll(null);
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeAll(null);
+      });
+    }
   }
-  initTicketCombos();
 
   // ---------------- Markdown toolbar ----------------
   // Inserts markdown syntax at the cursor (or wraps the selection) in the
@@ -567,6 +757,10 @@
       const targetId = bar.dataset.target;
       const ta = document.getElementById(targetId);
       if (!ta) return;
+      // Belt and braces against a double-bind: two handlers would insert the
+      // markdown twice per click.
+      if (bar.dataset.tlBound) return;
+      bar.dataset.tlBound = "1";
       bar.querySelectorAll(".md-btn").forEach(btn => {
         btn.addEventListener("click", (e) => {
           e.preventDefault();
@@ -623,13 +817,16 @@
     ta.setSelectionRange(caret, caret);
     ta.dispatchEvent(new Event("input", { bubbles: true }));
   }
-  initMarkdownToolbars();
 
   // ---------------- v2 ribbon — zoom pills + drag-to-create ----------------
   function initRibbonV2() {
     const ribbon = document.getElementById("ribbon");
     const track = document.getElementById("ribbon-track");
     if (!ribbon || !track) return;
+    // Belt and braces against a double-bind: two mousedown handlers on the same
+    // handle would fire two drags, and so two retime POSTs.
+    if (ribbon.dataset.tlBound) return;
+    ribbon.dataset.tlBound = "1";
 
     // Read the initial window from the active zoom pill (12h by default = 07:00–19:00).
     let windowStart = 7 * 60;
@@ -711,21 +908,30 @@
       repositionNow();
     }
 
-    // Wire zoom pills.
+    // Wire zoom pills, then restore the zoom the user had picked — the ribbon is
+    // re-rendered on every save and would otherwise snap back to 12h.
     document.querySelectorAll(".zoom-pill").forEach(btn => {
       btn.addEventListener("click", () => {
-        document.querySelectorAll(".zoom-pill").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        const s = parseInt(btn.dataset.startMin, 10);
-        const e = parseInt(btn.dataset.endMin, 10);
-        if (!isNaN(s) && !isNaN(e)) applyZoom(s, e);
+        ribbonZoom = btn.dataset.zoom;
+        selectZoom(btn.dataset.zoom);
       });
     });
 
-    // Drag-to-create. Mousedown on empty track area, mouseup → POST to /day/{ds}/block.
-    let dragging = false;
-    let dragStartX = 0;
-    let dragStartMin = 0;
+    function selectZoom(name) {
+      let picked = null;
+      document.querySelectorAll(".zoom-pill").forEach(b => {
+        const on = b.dataset.zoom === name;
+        b.classList.toggle("active", on);
+        if (on) picked = b;
+      });
+      if (!picked) return;
+      const s = parseInt(picked.dataset.startMin, 10);
+      const e = parseInt(picked.dataset.endMin, 10);
+      if (!isNaN(s) && !isNaN(e)) applyZoom(s, e);
+    }
+
+    if (ribbonZoom && ribbonZoom !== "day") selectZoom(ribbonZoom);
+
     const ghost = document.getElementById("ribbon-ghost");
     const form = document.getElementById("ribbon-drag-form");
 
@@ -737,52 +943,120 @@
     function snap5(m) { return Math.round(m / 5) * 5; }
     function minToPct(m) { return ((m - windowStart) / windowSpan()) * 100; }
 
+    // Both drags below attach their move/up listeners on mousedown and drop them
+    // on mouseup. initRibbonV2 re-runs after every swap, so listeners that lived
+    // for the page's lifetime would pile up one copy per save.
+    function onDrag(move, done) {
+      function up(e) {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        document.removeEventListener("keydown", esc);
+        done(e, false);
+      }
+      function esc(e) {
+        if (e.key !== "Escape") return;
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        document.removeEventListener("keydown", esc);
+        done(e, true);
+      }
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+      document.addEventListener("keydown", esc);
+    }
+
+    // ---- Edge drag: retime an existing draft by pulling its start or end ----
+    // The bar follows the cursor locally; only the mouseup commits, so a stray
+    // drag costs nothing and a committed one is a single undoable POST.
+    ribbon.querySelectorAll(".draft-handle").forEach(handle => {
+      handle.addEventListener("mousedown", (e) => {
+        const bar = handle.closest(".draft-bar");
+        if (!bar || e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const origStart = hmToMin(bar.dataset.startHm);
+        const origEnd = hmToMin(bar.dataset.endHm);
+        if (isNaN(origStart) || isNaN(origEnd)) return;
+        const which = handle.dataset.edge;
+        let startMin = origStart, endMin = origEnd;
+        ribbon.classList.add("is-dragging");
+
+        function paint() {
+          const range = clampPctRange(startMin, endMin);
+          if (!range) return;
+          bar.style.left = range.left + "%";
+          bar.style.width = range.width + "%";
+          bar.dataset.startHm = minToHm(startMin);
+          bar.dataset.endHm = minToHm(endMin);
+        }
+        onDrag(
+          (ev) => {
+            const m = snap5(trackXToMin(ev.clientX));
+            if (which === "start") {
+              if (m < endMin - 5) { startMin = m; paint(); }
+            } else if (m > startMin + 5) {
+              endMin = m; paint();
+            }
+          },
+          (ev, cancelled) => {
+            ribbon.classList.remove("is-dragging");
+            if (cancelled) { startMin = origStart; endMin = origEnd; paint(); return; }
+            if (startMin === origStart && endMin === origEnd) return;
+            livePost("/block/" + bar.dataset.blockId + "/retime", {
+              ds: currentDate(),
+              start: minToHm(startMin),
+              end: minToHm(endMin),
+            });
+          }
+        );
+      });
+    });
+
+    // Double-click a bar to open its editor.
+    ribbon.querySelectorAll(".draft-bar:not(.submitted)").forEach(bar => {
+      bar.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        const id = parseInt(bar.dataset.blockId, 10);
+        if (!isNaN(id)) openBlock(id);
+      });
+    });
+
+    // ---- Drag-to-create: sweep empty track, release to draft a block ----
     track.addEventListener("mousedown", (e) => {
       // Don't start a drag on top of an existing segment/draft/marker.
       if (e.target !== track) return;
       if (e.button !== 0) return;
-      dragging = true;
-      dragStartX = e.clientX;
-      dragStartMin = trackXToMin(e.clientX);
+      e.preventDefault();
+      const from = trackXToMin(e.clientX);
+      let to = from;
       ribbon.classList.add("is-dragging");
       ghost.hidden = false;
-      ghost.style.left = minToPct(dragStartMin) + "%";
+      ghost.style.left = minToPct(from) + "%";
       ghost.style.width = "0%";
-      e.preventDefault();
-    });
-    document.addEventListener("mousemove", (e) => {
-      if (!dragging) return;
-      const cur = trackXToMin(e.clientX);
-      const a = Math.min(cur, dragStartMin);
-      const b = Math.max(cur, dragStartMin);
-      ghost.style.left = minToPct(a) + "%";
-      ghost.style.width = Math.max(0, minToPct(b) - minToPct(a)) + "%";
-    });
-    document.addEventListener("mouseup", (e) => {
-      if (!dragging) return;
-      dragging = false;
-      ribbon.classList.remove("is-dragging");
-      ghost.hidden = true;
-      const cur = trackXToMin(e.clientX);
-      const a = snap5(Math.min(cur, dragStartMin));
-      const b = snap5(Math.max(cur, dragStartMin));
-      if (b - a < 10) return;  // ignore short drags
-      if (!form) return;
-      form.querySelector('input[name="start"]').value = minToHm(a);
-      form.querySelector('input[name="end"]').value = minToHm(b);
-      form.submit();
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && dragging) {
-        dragging = false;
-        ribbon.classList.remove("is-dragging");
-        ghost.hidden = true;
-      }
+
+      onDrag(
+        (ev) => {
+          to = trackXToMin(ev.clientX);
+          const a = Math.min(to, from), b = Math.max(to, from);
+          ghost.style.left = minToPct(a) + "%";
+          ghost.style.width = Math.max(0, minToPct(b) - minToPct(a)) + "%";
+        },
+        (ev, cancelled) => {
+          ribbon.classList.remove("is-dragging");
+          ghost.hidden = true;
+          if (cancelled || !form) return;
+          const a = snap5(Math.min(to, from)), b = snap5(Math.max(to, from));
+          if (b - a < 10) return;  // ignore short drags
+          form.querySelector('input[name="start"]').value = minToHm(a);
+          form.querySelector('input[name="end"]').value = minToHm(b);
+          form.requestSubmit();     // requestSubmit (not submit) so htmx intercepts
+        }
+      );
     });
   }
-  initRibbonV2();
 
   // ---------------- v2 live clock (topbar) ----------------
+  // The header isn't a live region, so this only needs setting up once.
   function initLiveClock() {
     const el = document.getElementById("live-clock-time");
     if (!el) return;
@@ -795,13 +1069,97 @@
     tick();
     setInterval(tick, 30000);
   }
+
+  // ---------------- Per-render wiring ----------------
+  // Everything that binds to elements inside a live region. Runs on load and
+  // again after each htmx swap.
+  function initDynamic() {
+    initBulkTicket();
+    initTicketsBrowser();
+    initTicketCombos();
+    initMarkdownToolbars();
+    initRibbonV2();
+    applySelection();
+
+    // Leaving the editor by Esc or Cancel ends the review session; leaving it by
+    // saving does not (the dialog is destroyed by the swap, so no close event).
+    // Scoped to block editors — the submit and tickets dialogs share the class
+    // and closing one of those shouldn't end a review.
+    document.querySelectorAll(".edit-dialog[data-block-id]").forEach(dlg => {
+      dlg.addEventListener("close", () => {
+        if (advanceFrom === null) review = null;
+      });
+    });
+  }
+
+  // Delegated actions on elements that live inside swapped regions.
+  document.addEventListener("click", (e) => {
+    const saveNext = e.target.closest(".btn-save-next");
+    if (saveNext) {
+      // Record where to resume; the form submit continues normally and the
+      // afterSettle handler opens the next draft.
+      const dlg = saveNext.closest("dialog");
+      const id = dlg ? parseInt(dlg.dataset.blockId, 10) : NaN;
+      if (!isNaN(id)) {
+        if (!review) review = { ids: draftIds() };
+        advanceFrom = id;
+      }
+      return;
+    }
+    if (e.target.closest("#bulk-bar-log")) { submitBulkLog(); return; }
+  });
+
+  // ---------------- htmx lifecycle ----------------
+  document.addEventListener("htmx:beforeRequest", () => {
+    savedScrollY = window.scrollY;
+  });
+
+  function onSettled() {
+    // Replacing #day-live can change the document height enough to shift the
+    // viewport; put it back so a save really is invisible.
+    if (savedScrollY !== null) {
+      window.scrollTo(0, savedScrollY);
+      savedScrollY = null;
+    }
+    initDynamic();
+    consumeToast();
+
+    if (advanceFrom !== null) {
+      const from = advanceFrom;
+      advanceFrom = null;
+      const next = nextInReview(from);
+      if (next !== null) {
+        openBlock(next);
+      } else if (review) {
+        review = null;
+        showToast("That was the last draft");
+      }
+    }
+  }
+
+  // htmx fires afterSettle once per swapped element, and one mutation swaps five
+  // regions — so coalesce into a single run per frame. Without this, initDynamic
+  // would bind the markdown toolbars and ribbon drag handlers five times over and
+  // every click would fire that many actions.
+  let settleQueued = false;
+  document.addEventListener("htmx:afterSettle", () => {
+    if (settleQueued) return;
+    settleQueued = true;
+    requestAnimationFrame(() => { settleQueued = false; onSettled(); });
+  });
+
   initLiveClock();
+  initDynamic();
+  consumeToast();
 
   // Export a tiny API for inline onclick handlers
   window.TL = {
     toggleTheme,
     openCmdk,
     openSubmitConfirm,
+    openBlock,
+    startReview,
+    undo,
     appendDesc,
   };
   window.appendDesc = appendDesc; // legacy inline reference
